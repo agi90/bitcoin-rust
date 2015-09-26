@@ -6,3 +6,11 @@ authors = ["Giovanni Sferro <agi.novanta@gmail.com>"]
 [dependencies]
 rustc-serialize = "0.3"
 rust-crypto = "*"
+
+[profile.dev]
+opt-level = 0
+debug = true
+rpath = false
+lto = false
+debug-assertions = true
+codegen-units = 1
