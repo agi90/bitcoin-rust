@@ -5,4 +5,4 @@ language: rust
 matrix:
     allow_failures:
         - rust: nightly
-script: ./compile.sh 
+before_script: cd src
