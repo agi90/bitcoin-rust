@@ -3,5 +3,5 @@
 set -ev
 cd src
 
-cargo build
-cargo test
+/usr/local/bin/cargo build
+/usr/local/bin/cargo test
