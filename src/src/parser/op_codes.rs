@@ -73,6 +73,91 @@ pub fn op_equalverify(stack: BitcoinStack) -> BitcoinStack {
     return new_stack;
 }
 
+pub fn op_false(stack: BitcoinStack) -> BitcoinStack {
+    // this is a no-op
+    stack
+}
+
+pub fn op_pushdata1(stack: BitcoinStack) -> BitcoinStack {
+    op_pushdata(stack, 0x01)
+}
+
+pub fn op_pushdata2(stack: BitcoinStack) -> BitcoinStack {
+    op_pushdata(stack, 0x02)
+}
+
+pub fn op_pushdata4(stack: BitcoinStack) -> BitcoinStack {
+    op_pushdata(stack, 0x04)
+}
+
+pub fn op_pushdata(stack: BitcoinStack, bytes: u8) -> BitcoinStack {
+    let mut data : Vec<u8> = vec![];
+    let mut new_stack = stack;
+
+    for _ in 0..bytes {
+        match new_stack.data.last().unwrap() {
+            &ScriptElement::Data(x) => data.push(x),
+            &ScriptElement::OpCode(_) => assert!(false),
+        }
+
+        new_stack.data.pop();
+    }
+
+    new_stack.stack.push(data);
+
+    return new_stack;
+}
+
+fn push_to_stack(stack: BitcoinStack, data: u8) -> BitcoinStack {
+    let mut new_stack = stack;
+    new_stack.stack.push(vec![data]);
+
+    return new_stack;
+}
+
+pub fn op_1negate(stack: BitcoinStack) -> BitcoinStack {
+    // 0x81 is -1 TODO: consider moving to Vec<i8>
+    push_to_stack(stack, 0x81)
+}
+
+pub fn op_1(stack: BitcoinStack)  -> BitcoinStack { push_to_stack(stack, 0x79) }
+pub fn op_2(stack: BitcoinStack)  -> BitcoinStack { push_to_stack(stack, 0x78) }
+pub fn op_3(stack: BitcoinStack)  -> BitcoinStack { push_to_stack(stack, 0x77) }
+pub fn op_4(stack: BitcoinStack)  -> BitcoinStack { push_to_stack(stack, 0x76) }
+pub fn op_5(stack: BitcoinStack)  -> BitcoinStack { push_to_stack(stack, 0x75) }
+pub fn op_6(stack: BitcoinStack)  -> BitcoinStack { push_to_stack(stack, 0x74) }
+pub fn op_7(stack: BitcoinStack)  -> BitcoinStack { push_to_stack(stack, 0x73) }
+pub fn op_8(stack: BitcoinStack)  -> BitcoinStack { push_to_stack(stack, 0x72) }
+pub fn op_9(stack: BitcoinStack)  -> BitcoinStack { push_to_stack(stack, 0x71) }
+pub fn op_10(stack: BitcoinStack) -> BitcoinStack { push_to_stack(stack, 0x70) }
+pub fn op_11(stack: BitcoinStack) -> BitcoinStack { push_to_stack(stack, 0x69) }
+pub fn op_12(stack: BitcoinStack) -> BitcoinStack { push_to_stack(stack, 0x68) }
+pub fn op_13(stack: BitcoinStack) -> BitcoinStack { push_to_stack(stack, 0x67) }
+pub fn op_14(stack: BitcoinStack) -> BitcoinStack { push_to_stack(stack, 0x66) }
+pub fn op_15(stack: BitcoinStack) -> BitcoinStack { push_to_stack(stack, 0x65) }
+pub fn op_16(stack: BitcoinStack) -> BitcoinStack { push_to_stack(stack, 0x64) }
+
+pub fn op_nop(stack: BitcoinStack) -> BitcoinStack { stack }
+
+pub fn op_verify(stack: BitcoinStack) -> BitcoinStack {
+    let mut new_stack = stack;
+
+    new_stack.valid = match new_stack.stack.last() {
+        Some(x) => x.len() > 1 || (x.len() != 0 && x[0] != 0x80),
+        None => false,
+    };
+
+    return new_stack;
+}
+
+pub fn op_return(stack: BitcoinStack) -> BitcoinStack {
+    let mut new_stack = stack;
+
+    new_stack.valid = false;
+
+    return new_stack;
+}
+
 impl<'a> cmp::PartialEq for ScriptElement<'a> {
     fn eq(&self, other: &ScriptElement<'a>) -> bool {
         match self {
@@ -129,6 +214,7 @@ mod tests {
     use super::ripemd160;
     use super::sha256;
     use super::super::BitcoinStack;
+    use super::super::ScriptElement;
 
     use rustc_serialize::base64::FromBase64;
 
@@ -212,5 +298,115 @@ mod tests {
         test_op_hash(&op_hash160, "", "tHKiZtC9icE3BqQTLM+xb3w7n8s=");
         test_op_hash(&op_hash160, "YQ==", "mUNVGZ5Rb/dsT6Sqs5M3udhM8Ss=");
         test_op_hash(&op_hash160, "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXo", "woahrwlH9Y0a14c4WxwsSpdvnnE=");
+    }
+
+    fn get_data<'a>(data: &Vec<u8>) -> Vec<ScriptElement<'a>> {
+        // Data is reversed in actual code because we treat it
+        // like a stack.
+        let mut new_data = data.clone();
+        new_data.reverse();
+        new_data.iter().map(|b| ScriptElement::Data(*b)).collect()
+    }
+
+    fn test_nop(nop: fn(BitcoinStack) -> BitcoinStack) {
+        let stack = BitcoinStack::new(get_data(&vec![0x01]),
+                                      vec![vec![0x02], vec![0x03]]);
+        let output = nop(stack);
+        assert_eq!(output, BitcoinStack::new(vec![ScriptElement::Data(0x01)],
+                                      vec![vec![0x02], vec![0x03]]));
+    }
+
+    #[test]
+    fn test_op_false() {
+        test_nop(op_false);
+    }
+
+    #[test]
+    fn test_op_nop() {
+        test_nop(op_nop);
+    }
+
+    fn test_op_pushdata(data: Vec<u8>, op_pushdata: fn(BitcoinStack) -> BitcoinStack) {
+        let stack = BitcoinStack::new(get_data(&data), vec![]);
+        let output = op_pushdata(stack);
+        assert_eq!(output, BitcoinStack::new(vec![], vec![data]));
+    }
+
+    #[test]
+    fn test_op_pushdata1() {
+        test_op_pushdata(vec![0x01], op_pushdata1);
+    }
+
+    #[test]
+    fn test_op_pushdata2() {
+        test_op_pushdata(vec![0x01, 0x02], op_pushdata2);
+    }
+
+    #[test]
+    fn test_op_pushdata4() {
+        test_op_pushdata(vec![0x01, 0x02, 0x03, 0x04], op_pushdata4);
+    }
+
+    #[test]
+    fn test_op_pushdata_generic() {
+        let data = vec![0x01, 0x02, 0x03, 0x04, 0x05];
+        let stack = BitcoinStack::new(get_data(&data), vec![]);
+        let output = op_pushdata(stack, 0x05);
+        assert_eq!(output, BitcoinStack::new(vec![], vec![data]));
+    }
+
+    fn test_push_to_stack(data: u8, push: fn(BitcoinStack) -> BitcoinStack) {
+        let stack = BitcoinStack::new(vec![], vec![]);
+        let output = push(stack);
+        assert_eq!(output, BitcoinStack::new(vec![], vec![vec![data]]));
+    }
+
+    #[test]
+    fn test_1negate() { test_push_to_stack(0x81, op_1negate); }
+
+    #[test]
+    fn test_op_n() {
+        test_push_to_stack(0x79, op_1);
+        test_push_to_stack(0x78, op_2);
+        test_push_to_stack(0x77, op_3);
+        test_push_to_stack(0x76, op_4);
+        test_push_to_stack(0x75, op_5);
+        test_push_to_stack(0x74, op_6);
+        test_push_to_stack(0x73, op_7);
+        test_push_to_stack(0x72, op_8);
+        test_push_to_stack(0x71, op_9);
+        test_push_to_stack(0x70, op_10);
+        test_push_to_stack(0x69, op_11);
+        test_push_to_stack(0x68, op_12);
+        test_push_to_stack(0x67, op_13);
+        test_push_to_stack(0x66, op_14);
+        test_push_to_stack(0x65, op_15);
+        test_push_to_stack(0x64, op_16);
+    }
+
+    fn test_op_verify(data: Vec<Vec<u8>>, valid: bool) {
+        let stack = BitcoinStack::new(vec![], data);
+        let output = op_verify(stack);
+
+        assert_eq!(output.valid, valid);
+    }
+
+    #[test]
+    fn test_op_verify_impl() {
+        test_op_verify(vec![vec![0x80]], false);
+        test_op_verify(vec![vec![0x79]], true);
+        test_op_verify(vec![vec![]], false);
+        test_op_verify(vec![], false);
+        test_op_verify(vec![vec![0x80, 0x80]], true);
+        test_op_verify(vec![vec![0x80, 0x81]], true);
+        test_op_verify(vec![vec![0x79, 0x81]], true);
+    }
+
+    #[test]
+    fn test_op_return() {
+        let stack = BitcoinStack::new(vec![], vec![]);
+        let output = op_verify(stack);
+
+        assert!(!output.valid);
     }
 }

@@ -46,11 +46,42 @@ pub struct Parser {
     op_codes : HashMap<u8, OpCode>,
 }
 
-const OP_CODES : [(&'static str, u8, fn(BitcoinStack) -> BitcoinStack); 4] = [
-    ("OP_DUP", 0x76, op_codes::op_dup),
-    ("OP_HASH160", 0xa9, op_codes::op_hash160),
-    ("OP_HASH256", 0xaa, op_codes::op_hash256),
-    ("OP_EQUALVERIFY", 0x88, op_codes::op_equalverify),
+const OP_CODES : [(&'static str, u8, fn(BitcoinStack) -> BitcoinStack); 28] = [
+    ("OP_FALSE",        0x00, op_codes::op_false),
+    // opcodes 0x01 - 0x4b op_pushdata
+    ("OP_PUSHDATA1",    0x4c, op_codes::op_pushdata1),
+    ("OP_PUSHDATA2",    0x4d, op_codes::op_pushdata2),
+    ("OP_PUSHDATA4",    0x4e, op_codes::op_pushdata4),
+    ("OP_1NEGATE",      0x4f, op_codes::op_1negate),
+    // TODO: opcodes 0x50
+    ("OP_1",            0x51, op_codes::op_1),
+    ("OP_2",            0x52, op_codes::op_2),
+    ("OP_3",            0x53, op_codes::op_3),
+    ("OP_4",            0x54, op_codes::op_4),
+    ("OP_5",            0x55, op_codes::op_5),
+    ("OP_6",            0x56, op_codes::op_6),
+    ("OP_7",            0x57, op_codes::op_7),
+    ("OP_8",            0x58, op_codes::op_8),
+    ("OP_9",            0x59, op_codes::op_9),
+    ("OP_10",           0x5a, op_codes::op_10),
+    ("OP_11",           0x5b, op_codes::op_11),
+    ("OP_12",           0x5c, op_codes::op_12),
+    ("OP_13",           0x5d, op_codes::op_13),
+    ("OP_14",           0x5e, op_codes::op_14),
+    ("OP_15",           0x5f, op_codes::op_15),
+    ("OP_16",           0x60, op_codes::op_16),
+    ("OP_NOP",          0x61, op_codes::op_nop),
+    // TODO: opcodes 0x62 - 0x68
+    ("OP_VERIFY",       0x69, op_codes::op_verify),
+    ("OP_RETURN",       0x6a, op_codes::op_return),
+    // TODO: opcodes 0x6b - 0x75
+    ("OP_DUP",          0x76, op_codes::op_dup),
+    // TODO: opcodes 0x77 - 0x87
+    ("OP_EQUALVERIFY",  0x88, op_codes::op_equalverify),
+    // TODO: opcodes 0x89 - 0xa8
+    ("OP_HASH160",      0xa9, op_codes::op_hash160),
+    ("OP_HASH256",      0xaa, op_codes::op_hash256),
+    // TODO: opcodes 0xab - 0xff
 ];
 
 impl Parser {
@@ -73,7 +104,7 @@ impl Parser {
         let mut data : u8 = 0;
         for opcode in script {
             if data > 0 {
-                // If this opcode follows a 0x00-0x46 opcode, then it's just data
+                // If this opcode follows a 0x01-0x4b opcode, then it's just data
                 parsed.push(ScriptElement::Data(opcode));
                 data -= 1;
                 continue;
@@ -83,7 +114,7 @@ impl Parser {
                 Some(x) => parsed.push(ScriptElement::OpCode(x)),
                 None => {
                     // This opcode will push `opcode` bytes to the stack
-                    assert!(opcode < 0x47);
+                    assert!(opcode < 0x4c);
                     parsed.push(ScriptElement::Data(opcode));
                     data = opcode;
                 }
@@ -106,7 +137,7 @@ impl Parser {
                     assert!(x < 0x4c);
 
                     stack.data.pop();
-                    stack = self.push_to_stack(stack, x);
+                    stack = op_codes::op_pushdata(stack, x);
                 },
                 &ScriptElement::OpCode(x) => {
                     let ref parser = (*x).parser;
@@ -117,25 +148,6 @@ impl Parser {
         }
 
         return stack.valid;
-    }
-
-    fn push_to_stack<'a>(&'a self, stack: BitcoinStack<'a>, bytes: u8)
-    -> BitcoinStack {
-        let mut data : Vec<u8> = vec![];
-        let mut new_stack = stack;
-
-        for _ in 0..bytes {
-            match new_stack.data.last().unwrap() {
-                &ScriptElement::Data(x) => data.push(x),
-                &ScriptElement::OpCode(_) => assert!(false),
-            }
-
-            new_stack.data.pop();
-        }
-
-        new_stack.stack.push(data);
-
-        return new_stack;
     }
 }
 
