@@ -46,21 +46,21 @@ pub struct Parser {
     op_codes : HashMap<u8, OpCode>,
 }
 
+const OP_CODES : [(&'static str, u8, fn(BitcoinStack) -> BitcoinStack); 4] = [
+    ("OP_DUP", 0x76, op_codes::op_dup),
+    ("OP_HASH160", 0xa9, op_codes::op_hash160),
+    ("OP_HASH256", 0xaa, op_codes::op_hash256),
+    ("OP_EQUALVERIFY", 0x88, op_codes::op_equalverify),
+];
+
 impl Parser {
     pub fn new() -> Parser {
         let mut op_codes = HashMap::new();
-        
-        op_codes.insert(0x76, OpCode::new("OP_DUP", 0x76,
-                                          Box::new(op_codes::op_dup)));
 
-        op_codes.insert(0xa9, OpCode::new("OP_HASH160", 0xa9,
-                                          Box::new(op_codes::op_hash160)));
-
-        op_codes.insert(0xaa, OpCode::new("OP_HASH256", 0xaa,
-                                          Box::new(op_codes::op_hash256)));
-
-        op_codes.insert(0x88, OpCode::new("OP_EQUALVERIFY", 0x88,
-                                          Box::new(op_codes::op_equalverify)));
+        for op_code in OP_CODES.iter()
+            .map(|op| (op.1, OpCode::new(op.0, op.1, Box::new(op.2)))) {
+                op_codes.insert(op_code.0, op_code.1);
+            };
 
         Parser {
             op_codes: op_codes,
