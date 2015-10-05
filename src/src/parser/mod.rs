@@ -8,7 +8,7 @@ use std::fmt;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-pub struct BitcoinStack<'a> {
+pub struct Context<'a> {
     data: Rc<ScriptElement<'a>>,
     stack: Vec<Vec<u8>>,
     valid: bool,
@@ -26,12 +26,12 @@ pub struct OpCode {
     pub name: &'static str,
     pub code: u8,
     advancing: bool,
-    parser: fn(BitcoinStack) -> BitcoinStack,
+    parser: fn(Context) -> Context,
 }
 
-impl<'a> BitcoinStack<'a> {
-    pub fn new(data: Rc<ScriptElement<'a>>, stack: Vec<Vec<u8>>) -> BitcoinStack {
-        BitcoinStack {
+impl<'a> Context<'a> {
+    pub fn new(data: Rc<ScriptElement<'a>>, stack: Vec<Vec<u8>>) -> Context {
+        Context {
             data: data,
             stack: stack,
             valid: true
@@ -67,7 +67,7 @@ impl<'a> fmt::Debug for ScriptElement<'a> {
 
 impl OpCode {
     fn new(name: &'static str, code: u8, advancing: bool,
-           parser: fn(BitcoinStack) -> BitcoinStack) -> OpCode {
+           parser: fn(Context) -> Context) -> OpCode {
         OpCode {
             name: name,
             code: code,
@@ -82,10 +82,10 @@ pub struct Parser {
     op_pushdata : OpCode,
 }
 
-const OP_PUSHDATA : (&'static str, u8, bool, fn(BitcoinStack) -> BitcoinStack) =
+const OP_PUSHDATA : (&'static str, u8, bool, fn(Context) -> Context) =
     ("PUSHDATA",     0x01, false, op_codes::op_pushdata);
 
-const OP_CODES : [(&'static str, u8, bool, fn(BitcoinStack) -> BitcoinStack); 30] = [
+const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 30] = [
     ("0",            0x00, false, op_codes::op_false),
     // opcodes 0x02 - 0x4b op_pushdata
     ("1NEGATE",      0x4f, false, op_codes::op_1negate),
@@ -312,28 +312,28 @@ impl Parser {
 
     pub fn execute(&self, input_stack: Vec<Vec<u8>>,
                    parsed_script: Rc<ScriptElement>) -> bool {
-        let mut stack = BitcoinStack::new(parsed_script, input_stack);
+        let mut context = Context::new(parsed_script, input_stack);
         let mut done = false;
 
         while !done {
-            let ref advancing = stack.data.op_code.advancing;
-            let ref parser = stack.data.op_code.parser;
-            print!("op = {:?}\n", stack.data.op_code);
+            let ref advancing = context.data.op_code.advancing;
+            let ref parser = context.data.op_code.parser;
+            print!("op = {:?}\n", context.data.op_code);
 
-            let mut out_stack = parser(stack);
+            let mut new_context = parser(context);
 
             if !advancing {
-                match out_stack.data.next.clone() {
-                    Some(ref x) => out_stack.data = x.clone(),
+                match new_context.data.next.clone() {
+                    Some(ref x) => new_context.data = x.clone(),
                     None => done = true,
                 }
             }
 
-            stack = out_stack;
-            print!("stack.stack = {:?}\n", stack.stack);
+            context = new_context;
+            print!("stack.stack = {:?}\n", context.stack);
         }
 
-        return stack.valid && op_codes::is_true(&stack.stack.last());
+        return context.valid && op_codes::is_true(&context.stack.last());
     }
 }
 

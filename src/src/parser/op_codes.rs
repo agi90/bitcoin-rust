@@ -1,6 +1,6 @@
 extern crate rustc_serialize;
 
-use super::BitcoinStack;
+use super::Context;
 use super::OpCode;
 
 use crypto::sha2;
@@ -20,7 +20,7 @@ fn ripemd160(input : Vec<u8>) -> Vec<u8> {
     let mut result_array = Vec::new();
     result_array.extend(result.iter().cloned());
 
-    return result_array;
+    result_array
 }
 
 fn sha256(input : Vec<u8>) -> Vec<u8> {
@@ -33,122 +33,125 @@ fn sha256(input : Vec<u8>) -> Vec<u8> {
     let mut result_array = Vec::new();
     result_array.extend(result.iter().cloned());
 
-    return result_array;
+    result_array
 }
 
-pub fn op_dup(stack: BitcoinStack) -> BitcoinStack {
-    assert!(stack.stack.len() > 0);
+pub fn op_dup(context: Context) -> Context {
+    assert!(context.stack.len() > 0);
 
-    let mut new_stack = stack;
-    let last = new_stack.stack.last().unwrap().clone();
-    new_stack.stack.push(last);
+    let mut new_context = context;
+    let last = new_context.stack.last().unwrap().clone();
+    new_context.stack.push(last);
 
-    return new_stack;
+    new_context
 }
 
-pub fn op_hash256(stack: BitcoinStack) -> BitcoinStack {
-    let mut new_stack = stack;
-    let last = new_stack.stack.pop().unwrap();
+pub fn op_hash256(context: Context) -> Context {
+    let mut new_context = context;
+    let last = new_context.stack.pop().unwrap();
 
-    new_stack.stack.push(sha256(sha256(last)));
-    return new_stack;
+    new_context.stack.push(sha256(sha256(last)));
+
+    new_context
 }
 
-pub fn op_hash160(stack: BitcoinStack) -> BitcoinStack {
-    let mut new_stack = stack;
-    let last = new_stack.stack.pop().unwrap();
+pub fn op_hash160(context: Context) -> Context {
+    let mut new_context = context;
+    let last = new_context.stack.pop().unwrap();
 
-    new_stack.stack.push(ripemd160(sha256(last)));
-    return new_stack;
+    new_context.stack.push(ripemd160(sha256(last)));
+
+    new_context
 }
 
-pub fn op_equalverify(stack: BitcoinStack) -> BitcoinStack {
-    assert!(stack.stack.len() >= 2);
+pub fn op_equalverify(context: Context) -> Context {
+    assert!(context.stack.len() >= 2);
 
-    let mut new_stack = stack;
-    let x = new_stack.stack.pop().unwrap();
-    let y = new_stack.stack.pop().unwrap();
+    let mut new_context = context;
+    let x = new_context.stack.pop().unwrap();
+    let y = new_context.stack.pop().unwrap();
 
-    new_stack.valid = x.eq(&y);
-    return new_stack;
+    new_context.valid = x.eq(&y);
+
+    new_context
 }
 
-pub fn op_false(stack: BitcoinStack) -> BitcoinStack {
-    let mut new_stack = stack;
-    new_stack.stack.push(vec![]);
+pub fn op_false(context: Context) -> Context {
+    let mut new_context = context;
+    new_context.stack.push(vec![]);
 
-    new_stack
+    new_context
 }
 
-pub fn op_pushdata(stack: BitcoinStack) -> BitcoinStack {
-    let mut new_stack = stack;
-    new_stack.stack.push(new_stack.data.data.clone());
+pub fn op_pushdata(context: Context) -> Context {
+    let mut new_context = context;
+    new_context.stack.push(new_context.data.data.clone());
 
-    new_stack
+    new_context
 }
 
-fn push_to_stack(stack: BitcoinStack, data: u8) -> BitcoinStack {
-    let mut new_stack = stack;
-    new_stack.stack.push(vec![data]);
+fn push_to_stack(context: Context, data: u8) -> Context {
+    let mut new_context = context;
+    new_context.stack.push(vec![data]);
 
-    new_stack
+    new_context
 }
 
-pub fn op_1negate(stack: BitcoinStack) -> BitcoinStack {
+pub fn op_1negate(context: Context) -> Context {
     // 0x81 is -1 TODO: consider moving to Vec<i8>
-    push_to_stack(stack, 0x81)
+    push_to_stack(context, 0x81)
 }
 
-pub fn op_1(stack: BitcoinStack)  -> BitcoinStack { push_to_stack(stack, 0x79) }
-pub fn op_2(stack: BitcoinStack)  -> BitcoinStack { push_to_stack(stack, 0x78) }
-pub fn op_3(stack: BitcoinStack)  -> BitcoinStack { push_to_stack(stack, 0x77) }
-pub fn op_4(stack: BitcoinStack)  -> BitcoinStack { push_to_stack(stack, 0x76) }
-pub fn op_5(stack: BitcoinStack)  -> BitcoinStack { push_to_stack(stack, 0x75) }
-pub fn op_6(stack: BitcoinStack)  -> BitcoinStack { push_to_stack(stack, 0x74) }
-pub fn op_7(stack: BitcoinStack)  -> BitcoinStack { push_to_stack(stack, 0x73) }
-pub fn op_8(stack: BitcoinStack)  -> BitcoinStack { push_to_stack(stack, 0x72) }
-pub fn op_9(stack: BitcoinStack)  -> BitcoinStack { push_to_stack(stack, 0x71) }
-pub fn op_10(stack: BitcoinStack) -> BitcoinStack { push_to_stack(stack, 0x70) }
-pub fn op_11(stack: BitcoinStack) -> BitcoinStack { push_to_stack(stack, 0x69) }
-pub fn op_12(stack: BitcoinStack) -> BitcoinStack { push_to_stack(stack, 0x68) }
-pub fn op_13(stack: BitcoinStack) -> BitcoinStack { push_to_stack(stack, 0x67) }
-pub fn op_14(stack: BitcoinStack) -> BitcoinStack { push_to_stack(stack, 0x66) }
-pub fn op_15(stack: BitcoinStack) -> BitcoinStack { push_to_stack(stack, 0x65) }
-pub fn op_16(stack: BitcoinStack) -> BitcoinStack { push_to_stack(stack, 0x64) }
+pub fn  op_1(context: Context) -> Context { push_to_stack(context, 0x79) }
+pub fn  op_2(context: Context) -> Context { push_to_stack(context, 0x78) }
+pub fn  op_3(context: Context) -> Context { push_to_stack(context, 0x77) }
+pub fn  op_4(context: Context) -> Context { push_to_stack(context, 0x76) }
+pub fn  op_5(context: Context) -> Context { push_to_stack(context, 0x75) }
+pub fn  op_6(context: Context) -> Context { push_to_stack(context, 0x74) }
+pub fn  op_7(context: Context) -> Context { push_to_stack(context, 0x73) }
+pub fn  op_8(context: Context) -> Context { push_to_stack(context, 0x72) }
+pub fn  op_9(context: Context) -> Context { push_to_stack(context, 0x71) }
+pub fn op_10(context: Context) -> Context { push_to_stack(context, 0x70) }
+pub fn op_11(context: Context) -> Context { push_to_stack(context, 0x69) }
+pub fn op_12(context: Context) -> Context { push_to_stack(context, 0x68) }
+pub fn op_13(context: Context) -> Context { push_to_stack(context, 0x67) }
+pub fn op_14(context: Context) -> Context { push_to_stack(context, 0x66) }
+pub fn op_15(context: Context) -> Context { push_to_stack(context, 0x65) }
+pub fn op_16(context: Context) -> Context { push_to_stack(context, 0x64) }
 
-pub fn op_nop(stack: BitcoinStack) -> BitcoinStack { stack }
-pub fn op_if(stack: BitcoinStack) -> BitcoinStack {
-    let mut new_stack = stack;
-    let last = new_stack.stack.pop().unwrap();
+pub fn op_nop(context: Context) -> Context { context }
+pub fn op_if(context: Context) -> Context {
+    let mut new_context = context;
+    let last = new_context.stack.pop().unwrap();
 
     if is_true(&Some(&last)) {
-        new_stack.data = new_stack.data.next.clone().unwrap();
+        new_context.data = new_context.data.next.clone().unwrap();
     } else {
-        new_stack.data = new_stack.data.next_else.clone().unwrap();
+        new_context.data = new_context.data.next_else.clone().unwrap();
     }
     
-    new_stack
+    new_context
 }
 
-pub fn op_notif(stack: BitcoinStack) -> BitcoinStack {
-    let mut new_stack = stack;
-    let last = new_stack.stack.pop().unwrap();
+pub fn op_notif(context: Context) -> Context {
+    let mut new_context = context;
+    let last = new_context.stack.pop().unwrap();
 
     if !is_true(&Some(&last)) {
-        new_stack.data = new_stack.data.next.clone().unwrap();
+        new_context.data = new_context.data.next.clone().unwrap();
     } else {
-        new_stack.data = new_stack.data.next_else.clone().unwrap();
+        new_context.data = new_context.data.next_else.clone().unwrap();
     }
     
-    new_stack
+    new_context
 }
 
-pub fn op_else(_: BitcoinStack) -> BitcoinStack {
+pub fn op_else(_: Context) -> Context {
     // this op should never be invoked
     unimplemented!()
 }
 
-pub fn op_endif(stack: BitcoinStack) -> BitcoinStack { stack }
+pub fn op_endif(context: Context) -> Context { context }
 
 pub fn is_true(element: &Option<&Vec<u8>>) -> bool {
     match element {
@@ -157,20 +160,19 @@ pub fn is_true(element: &Option<&Vec<u8>>) -> bool {
     }
 }
 
-pub fn op_verify(stack: BitcoinStack) -> BitcoinStack {
-    let mut new_stack = stack;
+pub fn op_verify(context: Context) -> Context {
+    let mut new_context = context;
 
-    new_stack.valid = is_true(&new_stack.stack.last());
-    print!("new_stack.valid = {:?}\n", &new_stack.valid);
-    return new_stack;
+    new_context.valid = is_true(&new_context.stack.last());
+    return new_context;
 }
 
-pub fn op_return(stack: BitcoinStack) -> BitcoinStack {
-    let mut new_stack = stack;
+pub fn op_return(context: Context) -> Context {
+    let mut new_context = context;
 
-    new_stack.valid = false;
+    new_context.valid = false;
 
-    return new_stack;
+    return new_context;
 }
 
 impl cmp::PartialEq for OpCode {
@@ -185,15 +187,15 @@ impl fmt::Debug for OpCode {
     }
 }
 
-impl<'a> fmt::Debug for BitcoinStack<'a> {
+impl<'a> fmt::Debug for Context<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "BicoinStack(data={:?}, stack={:?}, valid={:?})",
+        write!(f, "Context(data={:?}, stack={:?}, valid={:?})",
                self.data, self.stack, self.valid)
     }
 }
 
-impl<'a> cmp::PartialEq for BitcoinStack<'a> {
-    fn eq(&self, other: &BitcoinStack<'a>) -> bool {
+impl<'a> cmp::PartialEq for Context<'a> {
+    fn eq(&self, other: &Context<'a>) -> bool {
         self.data == other.data && self.stack == other.stack &&
             self.valid == other.valid
     }
@@ -204,7 +206,7 @@ mod tests {
     use super::*;
     use super::ripemd160;
     use super::sha256;
-    use super::super::BitcoinStack;
+    use super::super::Context;
     use super::super::ScriptElement;
     use super::super::OpCode;
 
@@ -237,42 +239,42 @@ mod tests {
         test_hash(&sha256, "dGVzdF8y", "oQnb2DKAEyn4QJvuKEUCStTOqfAz+lwr0XfG/T54ZYc=");
     }
 
-    fn get_stack<'a>(stack: Vec<Vec<u8>>) -> BitcoinStack<'a> {
+    fn get_context<'a>(stack: Vec<Vec<u8>>) -> Context<'a> {
         let op_code = &TEST_OP_CODE;
         let script_element = ScriptElement::new(op_code, vec![], 0);
 
-        BitcoinStack::new(Rc::new(script_element), stack)
+        Context::new(Rc::new(script_element), stack)
     }
 
     #[test]
     fn test_op_dup() {
-        let stack = get_stack(vec![vec![0x01]]);
-        let output = op_dup(stack);
+        let context = get_context(vec![vec![0x01]]);
+        let output = op_dup(context);
 
-        assert_eq!(get_stack(vec![vec![0x01], vec![0x01]]), output);
+        assert_eq!(get_context(vec![vec![0x01], vec![0x01]]), output);
     }
 
     #[test]
     #[should_panic]
     fn test_op_dup_panic() {
-        let stack = get_stack(vec![]);
-        op_dup(stack);
+        let context = get_context(vec![]);
+        op_dup(context);
     }
 
     #[test]
     fn test_op_equalverify_true() {
-        let stack = get_stack(vec![vec![0x01], vec![0x1]]);
-        let output = op_equalverify(stack);
+        let context = get_context(vec![vec![0x01], vec![0x1]]);
+        let output = op_equalverify(context);
 
-        assert_eq!(get_stack(vec![]), output);
+        assert_eq!(get_context(vec![]), output);
     }
 
     #[test]
     fn test_op_equalverify_false() {
-        let stack = get_stack(vec![vec![0x01], vec![0x2]]);
-        let output = op_equalverify(stack);
+        let context = get_context(vec![vec![0x01], vec![0x2]]);
+        let output = op_equalverify(context);
 
-        let mut expected = get_stack(vec![]);
+        let mut expected = get_context(vec![]);
         expected.valid = false;
 
         assert_eq!(expected, output);
@@ -281,16 +283,16 @@ mod tests {
     #[test]
     #[should_panic]
     fn test_op_equalverify_panic() {
-        let stack = get_stack(vec![]);
-        op_equalverify(stack);
+        let context = get_context(vec![]);
+        op_equalverify(context);
     }
 
-    fn test_op_hash(op_hash: &Fn(BitcoinStack) -> BitcoinStack,
+    fn test_op_hash(op_hash: &Fn(Context) -> Context,
                     input: &str, expected: &str) {
-        let stack = get_stack(vec![input.from_base64().unwrap()]);
-        let output = op_hash(stack);
+        let context = get_context(vec![input.from_base64().unwrap()]);
+        let output = op_hash(context);
 
-        assert_eq!(get_stack(vec![expected.from_base64().unwrap()]),
+        assert_eq!(get_context(vec![expected.from_base64().unwrap()]),
                    output);
     }
 
@@ -308,18 +310,18 @@ mod tests {
         test_op_hash(&op_hash160, "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXo", "woahrwlH9Y0a14c4WxwsSpdvnnE=");
     }
 
-    fn test_nop(nop: fn(BitcoinStack) -> BitcoinStack) {
-        let stack = get_stack(vec![vec![0x02], vec![0x03]]);
-        let output = nop(stack);
-        assert_eq!(output, get_stack(vec![vec![0x02], vec![0x03]]));
+    fn test_nop(nop: fn(Context) -> Context) {
+        let context = get_context(vec![vec![0x02], vec![0x03]]);
+        let output = nop(context);
+        assert_eq!(output, get_context(vec![vec![0x02], vec![0x03]]));
     }
 
     #[test]
     fn test_op_false() {
-        let stack = get_stack(vec![vec![0x02], vec![0x03]]);
-        let output = op_false(stack);
+        let context = get_context(vec![vec![0x02], vec![0x03]]);
+        let output = op_false(context);
 
-        assert_eq!(output, get_stack(vec![vec![0x02], vec![0x03], vec![]]));
+        assert_eq!(output, get_context(vec![vec![0x02], vec![0x03], vec![]]));
     }
 
     #[test]
@@ -333,17 +335,17 @@ mod tests {
 
         let op_code = &TEST_OP_CODE;
         let script_element = Rc::new(ScriptElement::new(op_code, data.clone(), 0));
-        let stack = BitcoinStack::new(script_element.clone(), vec![]);
-        let expected = BitcoinStack::new(script_element.clone(), vec![data]);
+        let context = Context::new(script_element.clone(), vec![]);
+        let expected = Context::new(script_element.clone(), vec![data]);
 
-        let output = op_pushdata(stack);
+        let output = op_pushdata(context);
         assert_eq!(output, expected);
     }
 
-    fn test_push_to_stack(data: u8, push: fn(BitcoinStack) -> BitcoinStack) {
-        let stack = get_stack(vec![]);
-        let output = push(stack);
-        assert_eq!(output, get_stack(vec![vec![data]]));
+    fn test_push_to_stack(data: u8, push: fn(Context) -> Context) {
+        let context = get_context(vec![]);
+        let output = push(context);
+        assert_eq!(output, get_context(vec![vec![data]]));
     }
 
     #[test]
@@ -370,8 +372,8 @@ mod tests {
     }
 
     fn test_op_verify(data: Vec<Vec<u8>>, valid: bool) {
-        let stack = get_stack(data);
-        let output = op_verify(stack);
+        let context = get_context(data);
+        let output = op_verify(context);
 
         assert_eq!(output.valid, valid);
     }
@@ -389,8 +391,8 @@ mod tests {
 
     #[test]
     fn test_op_return() {
-        let stack = get_stack(vec![]);
-        let output = op_verify(stack);
+        let context = get_context(vec![]);
+        let output = op_verify(context);
 
         assert!(!output.valid);
     }
