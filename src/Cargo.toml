@@ -4,6 +4,7 @@ version = "0.1.0"
 authors = ["Giovanni Sferro <agi.novanta@gmail.com>"]
 
 [dependencies]
+regex = "0.1.41"
 rustc-serialize = "0.3"
 rust-crypto = "*"
 

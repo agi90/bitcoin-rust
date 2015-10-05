@@ -1,7 +1,7 @@
 extern crate rustc_serialize;
 
 use super::BitcoinStack;
-use super::ScriptElement;
+use super::OpCode;
 
 use crypto::sha2;
 use crypto::ripemd160;
@@ -74,45 +74,24 @@ pub fn op_equalverify(stack: BitcoinStack) -> BitcoinStack {
 }
 
 pub fn op_false(stack: BitcoinStack) -> BitcoinStack {
-    // this is a no-op
-    stack
-}
-
-pub fn op_pushdata1(stack: BitcoinStack) -> BitcoinStack {
-    op_pushdata(stack, 0x01)
-}
-
-pub fn op_pushdata2(stack: BitcoinStack) -> BitcoinStack {
-    op_pushdata(stack, 0x02)
-}
-
-pub fn op_pushdata4(stack: BitcoinStack) -> BitcoinStack {
-    op_pushdata(stack, 0x04)
-}
-
-pub fn op_pushdata(stack: BitcoinStack, bytes: u8) -> BitcoinStack {
-    let mut data : Vec<u8> = vec![];
     let mut new_stack = stack;
+    new_stack.stack.push(vec![]);
 
-    for _ in 0..bytes {
-        match new_stack.data.last().unwrap() {
-            &ScriptElement::Data(x) => data.push(x),
-            &ScriptElement::OpCode(_) => assert!(false),
-        }
+    new_stack
+}
 
-        new_stack.data.pop();
-    }
+pub fn op_pushdata(stack: BitcoinStack) -> BitcoinStack {
+    let mut new_stack = stack;
+    new_stack.stack.push(new_stack.data.data.clone());
 
-    new_stack.stack.push(data);
-
-    return new_stack;
+    new_stack
 }
 
 fn push_to_stack(stack: BitcoinStack, data: u8) -> BitcoinStack {
     let mut new_stack = stack;
     new_stack.stack.push(vec![data]);
 
-    return new_stack;
+    new_stack
 }
 
 pub fn op_1negate(stack: BitcoinStack) -> BitcoinStack {
@@ -138,15 +117,51 @@ pub fn op_15(stack: BitcoinStack) -> BitcoinStack { push_to_stack(stack, 0x65) }
 pub fn op_16(stack: BitcoinStack) -> BitcoinStack { push_to_stack(stack, 0x64) }
 
 pub fn op_nop(stack: BitcoinStack) -> BitcoinStack { stack }
+pub fn op_if(stack: BitcoinStack) -> BitcoinStack {
+    let mut new_stack = stack;
+    let last = new_stack.stack.pop().unwrap();
+
+    if is_true(&Some(&last)) {
+        new_stack.data = new_stack.data.next.clone().unwrap();
+    } else {
+        new_stack.data = new_stack.data.next_else.clone().unwrap();
+    }
+    
+    new_stack
+}
+
+pub fn op_notif(stack: BitcoinStack) -> BitcoinStack {
+    let mut new_stack = stack;
+    let last = new_stack.stack.pop().unwrap();
+
+    if !is_true(&Some(&last)) {
+        new_stack.data = new_stack.data.next.clone().unwrap();
+    } else {
+        new_stack.data = new_stack.data.next_else.clone().unwrap();
+    }
+    
+    new_stack
+}
+
+pub fn op_else(_: BitcoinStack) -> BitcoinStack {
+    // this op should never be invoked
+    unimplemented!()
+}
+
+pub fn op_endif(stack: BitcoinStack) -> BitcoinStack { stack }
+
+pub fn is_true(element: &Option<&Vec<u8>>) -> bool {
+    match element {
+        &Some(x) => x.len() > 1 || (x.len() != 0 && x[0] != 0x80),
+        &None => false,
+    }
+}
 
 pub fn op_verify(stack: BitcoinStack) -> BitcoinStack {
     let mut new_stack = stack;
 
-    new_stack.valid = match new_stack.stack.last() {
-        Some(x) => x.len() > 1 || (x.len() != 0 && x[0] != 0x80),
-        None => false,
-    };
-
+    new_stack.valid = is_true(&new_stack.stack.last());
+    print!("new_stack.valid = {:?}\n", &new_stack.valid);
     return new_stack;
 }
 
@@ -158,22 +173,22 @@ pub fn op_return(stack: BitcoinStack) -> BitcoinStack {
     return new_stack;
 }
 
-impl<'a> cmp::PartialEq for ScriptElement<'a> {
-    fn eq(&self, other: &ScriptElement<'a>) -> bool {
-        match self {
-            &ScriptElement::OpCode(x) => match other {
-                &ScriptElement::OpCode(y) => x.name == y.name && x.code == y.code,
-                _ => false,
-            },
-            &ScriptElement::Data(x) => match other {
-                &ScriptElement::Data(y) => x == y,
-                _ => false,
-            }
-        }
+impl cmp::PartialEq for OpCode {
+    fn eq(&self, other: &OpCode) -> bool {
+        self.name == other.name && self.code == other.code
     }
+}
 
-    fn ne(&self, other: &ScriptElement<'a>) -> bool {
-        !self.eq(other)
+impl fmt::Debug for OpCode {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "OpCode({}, 0x{:x})", self.name, self.code)
+    }
+}
+
+impl<'a> fmt::Debug for BitcoinStack<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "BicoinStack(data={:?}, stack={:?}, valid={:?})",
+               self.data, self.stack, self.valid)
     }
 }
 
@@ -181,30 +196,6 @@ impl<'a> cmp::PartialEq for BitcoinStack<'a> {
     fn eq(&self, other: &BitcoinStack<'a>) -> bool {
         self.data == other.data && self.stack == other.stack &&
             self.valid == other.valid
-    }
-
-    fn ne(&self, other: &BitcoinStack<'a>) -> bool {
-        !self.eq(other)
-    }
-}
-
-impl<'a> fmt::Debug for ScriptElement<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            &ScriptElement::OpCode(x) => 
-                write!(f, "ScriptElement(type=OpCode, data={:?})", x.name),
-            &ScriptElement::Data(x) =>
-                write!(f, "ScriptElement(type=Data, data={:?})", x),
-        }
-
-    }
-}
-
-impl<'a> fmt::Debug for BitcoinStack<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-
-        write!(f, "BitcoinStack(data={:?}, stack={:?}, valid={})",
-            self.data, self.stack, self.valid)
     }
 }
 
@@ -215,8 +206,17 @@ mod tests {
     use super::sha256;
     use super::super::BitcoinStack;
     use super::super::ScriptElement;
+    use super::super::OpCode;
 
+    use std::rc::Rc;
     use rustc_serialize::base64::FromBase64;
+
+    static TEST_OP_CODE: OpCode = OpCode {
+        name: "TEST",
+        code: 0x00,
+        advancing: false,
+        parser: op_nop
+    };  
 
     fn test_hash(hash: &Fn(Vec<u8>) -> Vec<u8>, input: &str, expected: &str) {
         let output = hash(input.from_base64().unwrap());
@@ -237,52 +237,60 @@ mod tests {
         test_hash(&sha256, "dGVzdF8y", "oQnb2DKAEyn4QJvuKEUCStTOqfAz+lwr0XfG/T54ZYc=");
     }
 
+    fn get_stack<'a>(stack: Vec<Vec<u8>>) -> BitcoinStack<'a> {
+        let op_code = &TEST_OP_CODE;
+        let script_element = ScriptElement::new(op_code, vec![], 0);
+
+        BitcoinStack::new(Rc::new(script_element), stack)
+    }
+
     #[test]
     fn test_op_dup() {
-        let stack = BitcoinStack::new(vec![], vec![vec![0x01]]);
+        let stack = get_stack(vec![vec![0x01]]);
         let output = op_dup(stack);
 
-        assert_eq!(BitcoinStack::new(vec![], vec![vec![0x01], vec![0x01]]), output);
+        assert_eq!(get_stack(vec![vec![0x01], vec![0x01]]), output);
     }
 
     #[test]
     #[should_panic]
     fn test_op_dup_panic() {
-        let stack = BitcoinStack::new(vec![], vec![]);
+        let stack = get_stack(vec![]);
         op_dup(stack);
     }
 
     #[test]
     fn test_op_equalverify_true() {
-        let stack = BitcoinStack::new(vec![], vec![vec![0x01], vec![0x1]]);
+        let stack = get_stack(vec![vec![0x01], vec![0x1]]);
         let output = op_equalverify(stack);
 
-        assert!(output.valid);
-        assert_eq!(BitcoinStack::new(vec![], vec![]), output);
+        assert_eq!(get_stack(vec![]), output);
     }
 
     #[test]
     fn test_op_equalverify_false() {
-        let stack = BitcoinStack::new(vec![], vec![vec![0x01], vec![0x2]]);
+        let stack = get_stack(vec![vec![0x01], vec![0x2]]);
         let output = op_equalverify(stack);
 
-        assert!(!output.valid);
-        assert_eq!(output.data, vec![]);
+        let mut expected = get_stack(vec![]);
+        expected.valid = false;
+
+        assert_eq!(expected, output);
     }
 
     #[test]
     #[should_panic]
     fn test_op_equalverify_panic() {
-        let stack = BitcoinStack::new(vec![], vec![]);
+        let stack = get_stack(vec![]);
         op_equalverify(stack);
     }
 
     fn test_op_hash(op_hash: &Fn(BitcoinStack) -> BitcoinStack,
                     input: &str, expected: &str) {
-        let stack = BitcoinStack::new(vec![], vec![input.from_base64().unwrap()]);
+        let stack = get_stack(vec![input.from_base64().unwrap()]);
         let output = op_hash(stack);
 
-        assert_eq!(BitcoinStack::new(vec![], vec![expected.from_base64().unwrap()]),
+        assert_eq!(get_stack(vec![expected.from_base64().unwrap()]),
                    output);
     }
 
@@ -300,25 +308,18 @@ mod tests {
         test_op_hash(&op_hash160, "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXo", "woahrwlH9Y0a14c4WxwsSpdvnnE=");
     }
 
-    fn get_data<'a>(data: &Vec<u8>) -> Vec<ScriptElement<'a>> {
-        // Data is reversed in actual code because we treat it
-        // like a stack.
-        let mut new_data = data.clone();
-        new_data.reverse();
-        new_data.iter().map(|b| ScriptElement::Data(*b)).collect()
-    }
-
     fn test_nop(nop: fn(BitcoinStack) -> BitcoinStack) {
-        let stack = BitcoinStack::new(get_data(&vec![0x01]),
-                                      vec![vec![0x02], vec![0x03]]);
+        let stack = get_stack(vec![vec![0x02], vec![0x03]]);
         let output = nop(stack);
-        assert_eq!(output, BitcoinStack::new(vec![ScriptElement::Data(0x01)],
-                                      vec![vec![0x02], vec![0x03]]));
+        assert_eq!(output, get_stack(vec![vec![0x02], vec![0x03]]));
     }
 
     #[test]
     fn test_op_false() {
-        test_nop(op_false);
+        let stack = get_stack(vec![vec![0x02], vec![0x03]]);
+        let output = op_false(stack);
+
+        assert_eq!(output, get_stack(vec![vec![0x02], vec![0x03], vec![]]));
     }
 
     #[test]
@@ -326,39 +327,23 @@ mod tests {
         test_nop(op_nop);
     }
 
-    fn test_op_pushdata(data: Vec<u8>, op_pushdata: fn(BitcoinStack) -> BitcoinStack) {
-        let stack = BitcoinStack::new(get_data(&data), vec![]);
-        let output = op_pushdata(stack);
-        assert_eq!(output, BitcoinStack::new(vec![], vec![data]));
-    }
-
-    #[test]
-    fn test_op_pushdata1() {
-        test_op_pushdata(vec![0x01], op_pushdata1);
-    }
-
-    #[test]
-    fn test_op_pushdata2() {
-        test_op_pushdata(vec![0x01, 0x02], op_pushdata2);
-    }
-
-    #[test]
-    fn test_op_pushdata4() {
-        test_op_pushdata(vec![0x01, 0x02, 0x03, 0x04], op_pushdata4);
-    }
-
     #[test]
     fn test_op_pushdata_generic() {
         let data = vec![0x01, 0x02, 0x03, 0x04, 0x05];
-        let stack = BitcoinStack::new(get_data(&data), vec![]);
-        let output = op_pushdata(stack, 0x05);
-        assert_eq!(output, BitcoinStack::new(vec![], vec![data]));
+
+        let op_code = &TEST_OP_CODE;
+        let script_element = Rc::new(ScriptElement::new(op_code, data.clone(), 0));
+        let stack = BitcoinStack::new(script_element.clone(), vec![]);
+        let expected = BitcoinStack::new(script_element.clone(), vec![data]);
+
+        let output = op_pushdata(stack);
+        assert_eq!(output, expected);
     }
 
     fn test_push_to_stack(data: u8, push: fn(BitcoinStack) -> BitcoinStack) {
-        let stack = BitcoinStack::new(vec![], vec![]);
+        let stack = get_stack(vec![]);
         let output = push(stack);
-        assert_eq!(output, BitcoinStack::new(vec![], vec![vec![data]]));
+        assert_eq!(output, get_stack(vec![vec![data]]));
     }
 
     #[test]
@@ -385,7 +370,7 @@ mod tests {
     }
 
     fn test_op_verify(data: Vec<Vec<u8>>, valid: bool) {
-        let stack = BitcoinStack::new(vec![], data);
+        let stack = get_stack(data);
         let output = op_verify(stack);
 
         assert_eq!(output.valid, valid);
@@ -404,7 +389,7 @@ mod tests {
 
     #[test]
     fn test_op_return() {
-        let stack = BitcoinStack::new(vec![], vec![]);
+        let stack = get_stack(vec![]);
         let output = op_verify(stack);
 
         assert!(!output.valid);
