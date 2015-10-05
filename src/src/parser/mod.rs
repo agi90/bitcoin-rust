@@ -83,68 +83,23 @@ pub struct Parser {
     human_readable_parser: HumanReadableParser,
 }
 
-const OP_PUSHDATA : (&'static str, u8, bool, fn(Context) -> Context) =
-    ("PUSHDATA",     0x01, false, op_codes::op_pushdata);
-
-const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 30] = [
-    ("0",            0x00, false, op_codes::op_false),
-    // opcodes 0x02 - 0x4b op_pushdata
-    ("1NEGATE",      0x4f, false, op_codes::op_1negate),
-    // TODO: opcodes 0x50
-    ("1",            0x51, false, op_codes::op_1),
-    ("2",            0x52, false, op_codes::op_2),
-    ("3",            0x53, false, op_codes::op_3),
-    ("4",            0x54, false, op_codes::op_4),
-    ("5",            0x55, false, op_codes::op_5),
-    ("6",            0x56, false, op_codes::op_6),
-    ("7",            0x57, false, op_codes::op_7),
-    ("8",            0x58, false, op_codes::op_8),
-    ("9",            0x59, false, op_codes::op_9),
-    ("10",           0x5a, false, op_codes::op_10),
-    ("11",           0x5b, false, op_codes::op_11),
-    ("12",           0x5c, false, op_codes::op_12),
-    ("13",           0x5d, false, op_codes::op_13),
-    ("14",           0x5e, false, op_codes::op_14),
-    ("15",           0x5f, false, op_codes::op_15),
-    ("16",           0x60, false, op_codes::op_16),
-    ("NOP",          0x61, false, op_codes::op_nop),
-    ("IF",           0x63, true,  op_codes::op_if),
-    ("NOTIF",        0x64, true,  op_codes::op_notif),
-    ("ELSE",         0x67, false, op_codes::op_else),
-    ("ENDIF",        0x68, false, op_codes::op_endif),
-    ("NOP",          0x61, false, op_codes::op_nop),
-    // TODO: opcodes 0x62 - 0x68
-    ("VERIFY",       0x69, false, op_codes::op_verify),
-    ("RETURN",       0x6a, false, op_codes::op_return),
-    // TODO: opcodes 0x6b - 0x75
-    ("DUP",          0x76, false, op_codes::op_dup),
-    // TODO: opcodes 0x77 - 0x87
-    ("EQUALVERIFY",  0x88, false, op_codes::op_equalverify),
-    // TODO: opcodes 0x89 - 0xa8
-    ("HASH160",      0xa9, false, op_codes::op_hash160),
-    ("HASH256",      0xaa, false, op_codes::op_hash256),
-    // TODO: opcodes 0xab - 0xff
-];
-
-const OP_IF: u8 = 0x63;
-const OP_NOTIF: u8 = 0x64;
-const OP_ELSE: u8 = 0x67;
-const OP_ENDIF: u8 = 0x68;
 
 impl Parser {
     pub fn new() -> Parser {
         let mut op_codes = HashMap::new();
 
-        for op_code in OP_CODES.iter()
+        for op_code in op_codes::OP_CODES.iter()
             .map(|op| (op.1, OpCode::new(op.0, op.1, op.2, op.3))) {
                 op_codes.insert(op_code.0, op_code.1);
             };
 
         Parser {
             op_codes: op_codes,
-            op_pushdata: OpCode::new(OP_PUSHDATA.0, OP_PUSHDATA.1, OP_PUSHDATA.2,
-                                     OP_PUSHDATA.3),
-            human_readable_parser: HumanReadableParser::new(&OP_CODES),
+            op_pushdata: OpCode::new(op_codes::OP_PUSHDATA.0,
+                                     op_codes::OP_PUSHDATA.1,
+                                     op_codes::OP_PUSHDATA.2,
+                                     op_codes::OP_PUSHDATA.3),
+            human_readable_parser: HumanReadableParser::new(&op_codes::OP_CODES),
         }
     }
 
@@ -156,7 +111,7 @@ impl Parser {
             Ok(x) => self.parse(x),
         }
     }
-    
+
     pub fn parse(&self, script_: Vec<u8>) -> Result<Rc<ScriptElement>, String> {
         let mut script = script_;
         script.reverse();
@@ -186,19 +141,20 @@ impl Parser {
                             None => return Err(format!("Unexpected end of data")),
                         };
                     }
-                
+
                     element = ScriptElement::new(&self.op_pushdata, data, id);
                     id += 1;
                 },
             };
 
-            if op_code == OP_ENDIF || op_code == OP_ELSE || op_code == OP_NOTIF {
+            if op_code == op_codes::OP_ENDIF || op_code == op_codes::OP_ELSE ||
+               op_code == op_codes::OP_NOTIF {
                 level -= 1;
             }
 
             script_elements.push((Box::new(element), level));
 
-            if op_code == OP_IF || op_code == OP_ELSE {
+            if op_code == op_codes::OP_IF || op_code == op_codes::OP_ELSE {
                 level += 1;
             }
         }
@@ -230,7 +186,7 @@ impl Parser {
                 let branch = self.get_next_branch(&mut script_elements, level);
                 let mut branching_el = script_elements.pop().unwrap();
 
-                if branching_el.0.op_code.code == OP_ELSE { 
+                if branching_el.0.op_code.code == op_codes::OP_ELSE {
                     let if_branch = self.get_next_branch(&mut script_elements, level);
                     branching_el = script_elements.pop().unwrap();
 
@@ -266,7 +222,8 @@ impl Parser {
         Some((Rc::new(*last.0), last.1))
     }
 
-    fn get_next_branch<'a>(&'a self, script_elements: &mut Vec<(Box<ScriptElement<'a>>, u32)>,
+    fn get_next_branch<'a>(&'a self,
+                           script_elements: &mut Vec<(Box<ScriptElement<'a>>, u32)>,
                            level: u32) -> Vec<(Box<ScriptElement<'a>>, u32)> {
         let mut branch = vec![];
         while script_elements.last().unwrap().1 != level {
@@ -380,7 +337,7 @@ mod tests {
         let parser = Parser::new();
 
         let data = parser.parse_human_readable(script);
-    
+
         match &data {
             &Ok(_) => {},
             &Err(ref x) => print!("Error: {}\n", x),

@@ -130,7 +130,7 @@ pub fn op_if(context: Context) -> Context {
     } else {
         new_context.data = new_context.data.next_else.clone().unwrap();
     }
-    
+
     new_context
 }
 
@@ -143,7 +143,7 @@ pub fn op_notif(context: Context) -> Context {
     } else {
         new_context.data = new_context.data.next_else.clone().unwrap();
     }
-    
+
     new_context
 }
 
@@ -202,6 +202,54 @@ impl<'a> cmp::PartialEq for Context<'a> {
     }
 }
 
+pub const OP_PUSHDATA : (&'static str, u8, bool, fn(Context) -> Context) =
+    ("PUSHDATA",     0x01, false, op_pushdata);
+
+pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 30] = [
+    ("0",            0x00, false, op_false),
+    // opcodes 0x02 - 0x4b op_pushdata
+    ("1NEGATE",      0x4f, false, op_1negate),
+    // TODO: opcodes 0x50
+    ("1",            0x51, false, op_1),
+    ("2",            0x52, false, op_2),
+    ("3",            0x53, false, op_3),
+    ("4",            0x54, false, op_4),
+    ("5",            0x55, false, op_5),
+    ("6",            0x56, false, op_6),
+    ("7",            0x57, false, op_7),
+    ("8",            0x58, false, op_8),
+    ("9",            0x59, false, op_9),
+    ("10",           0x5a, false, op_10),
+    ("11",           0x5b, false, op_11),
+    ("12",           0x5c, false, op_12),
+    ("13",           0x5d, false, op_13),
+    ("14",           0x5e, false, op_14),
+    ("15",           0x5f, false, op_15),
+    ("16",           0x60, false, op_16),
+    ("NOP",          0x61, false, op_nop),
+    ("IF",           0x63, true,  op_if),
+    ("NOTIF",        0x64, true,  op_notif),
+    ("ELSE",         0x67, false, op_else),
+    ("ENDIF",        0x68, false, op_endif),
+    ("NOP",          0x61, false, op_nop),
+    // TODO: opcodes 0x62 - 0x68
+    ("VERIFY",       0x69, false, op_verify),
+    ("RETURN",       0x6a, false, op_return),
+    // TODO: opcodes 0x6b - 0x75
+    ("DUP",          0x76, false, op_dup),
+    // TODO: opcodes 0x77 - 0x87
+    ("EQUALVERIFY",  0x88, false, op_equalverify),
+    // TODO: opcodes 0x89 - 0xa8
+    ("HASH160",      0xa9, false, op_hash160),
+    ("HASH256",      0xaa, false, op_hash256),
+    // TODO: opcodes 0xab - 0xff
+];
+
+pub const OP_IF: u8 = 0x63;
+pub const OP_NOTIF: u8 = 0x64;
+pub const OP_ELSE: u8 = 0x67;
+pub const OP_ENDIF: u8 = 0x68;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -219,7 +267,7 @@ mod tests {
         code: 0x00,
         advancing: false,
         parser: op_nop
-    };  
+    };
 
     fn test_hash(hash: &Fn(Vec<u8>) -> Vec<u8>, input: &str, expected: &str) {
         let output = hash(input.from_base64().unwrap());
