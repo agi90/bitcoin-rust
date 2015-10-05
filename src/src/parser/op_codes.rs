@@ -120,6 +120,7 @@ pub fn op_15(context: Context) -> Context { push_to_stack(context, 0x65) }
 pub fn op_16(context: Context) -> Context { push_to_stack(context, 0x64) }
 
 pub fn op_nop(context: Context) -> Context { context }
+
 pub fn op_if(context: Context) -> Context {
     let mut new_context = context;
     let last = new_context.stack.pop().unwrap();

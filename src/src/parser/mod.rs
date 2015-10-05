@@ -1,12 +1,12 @@
 mod op_codes;
 
-use rustc_serialize::hex::FromHex;
-use regex::Regex;
-
 use std::cmp;
 use std::fmt;
 use std::collections::HashMap;
 use std::rc::Rc;
+
+use rustc_serialize::hex::FromHex;
+use regex::Regex;
 
 pub struct Context<'a> {
     data: Rc<ScriptElement<'a>>,
@@ -80,6 +80,7 @@ impl OpCode {
 pub struct Parser {
     op_codes : HashMap<u8, OpCode>,
     op_pushdata : OpCode,
+    human_readable_parser: HumanReadableParser,
 }
 
 const OP_PUSHDATA : (&'static str, u8, bool, fn(Context) -> Context) =
@@ -143,52 +144,20 @@ impl Parser {
             op_codes: op_codes,
             op_pushdata: OpCode::new(OP_PUSHDATA.0, OP_PUSHDATA.1, OP_PUSHDATA.2,
                                      OP_PUSHDATA.3),
+            human_readable_parser: HumanReadableParser::new(&OP_CODES),
         }
     }
 
-    pub fn parse_human_readable(&self, script: &str) -> Result<Rc<ScriptElement>, &str> {
-        let mut op_codes_map = HashMap::new();
+    pub fn parse_human_readable(&self, script: &str) -> Result<Rc<ScriptElement>, String> {
+        let human_parsed = self.human_readable_parser.parse(script);
 
-        for op_code in OP_CODES.iter()
-            .map(|op| (op.0, self.op_codes.get(&op.1))) {
-                op_codes_map.insert(op_code.0, op_code.1);
-            };
-
-        let mut result = vec![];
-
-        for s in script.split(" ") {
-            match op_codes_map.get(&s) {
-                Some(x) => {
-                    result.push(x.unwrap().code);
-                },
-                None => {
-                    let re = Regex::new(r"0x(?P<h>[0-9a-fA-F]+)").unwrap();
-                    let hex = re.replace_all(s, "$h").from_hex();
-                    match hex {
-                        Ok(x) => {
-                            for h in x {
-                                result.push(h);
-                            }
-                        },
-                        Err(_) => {
-                            print!("Token not recognized `{}`\n", s);
-                            return Err("Unable to parse hex.");
-                        },
-                    };
-
-                },
-            };
+        match human_parsed {
+            Err(x) => Err(x),
+            Ok(x) => self.parse(x),
         }
-        
-        for h in &result {
-            print!("{:x} ", h);
-        }
-        print!("\n");
-
-        self.parse(result)
     }
     
-    pub fn parse(&self, script_: Vec<u8>) -> Result<Rc<ScriptElement>, &str> {
+    pub fn parse(&self, script_: Vec<u8>) -> Result<Rc<ScriptElement>, String> {
         let mut script = script_;
         script.reverse();
 
@@ -202,7 +171,6 @@ impl Parser {
 
             match self.op_codes.get(&op_code) {
                 Some(x) => {
-                    print!("op_code = {:?}\n", x);
                     element = ScriptElement::new(x, vec![], id);
                     id += 1;
                 },
@@ -211,13 +179,11 @@ impl Parser {
                     assert!(op_code < 0x4c);
                     let mut data = Vec::new();
 
-                    print!("op_code = {}\n", op_code);
                     for _ in 0..op_code {
                         let el = script.pop();
-                        print!("popping {:?}\n", el);
                         match el {
                             Some(x) => data.push(x),
-                            None => return Err("Unexpected end of data"),
+                            None => return Err(format!("Unexpected end of data")),
                         };
                     }
                 
@@ -238,7 +204,7 @@ impl Parser {
         }
 
         if level != 0 {
-            return Err("Unbalanced OP_IF{,NOT}");
+            return Err(format!("Unbalanced OP_IF or IF_NOT. level={}", level));
         }
 
         let head = self.build_script(script_elements, None, 0);
@@ -246,7 +212,7 @@ impl Parser {
             Some(x) => {
                 Ok(x.0)
             },
-            None => Err("Empty script"),
+            None => Err(format!("Empty script")),
         }
     }
 
@@ -318,7 +284,6 @@ impl Parser {
         while !done {
             let ref advancing = context.data.op_code.advancing;
             let ref parser = context.data.op_code.parser;
-            print!("op = {:?}\n", context.data.op_code);
 
             let mut new_context = parser(context);
 
@@ -330,10 +295,66 @@ impl Parser {
             }
 
             context = new_context;
-            print!("stack.stack = {:?}\n", context.stack);
         }
 
         return context.valid && op_codes::is_true(&context.stack.last());
+    }
+}
+
+pub struct HumanReadableParser {
+    op_codes_map: HashMap<String, u8>,
+}
+
+impl HumanReadableParser {
+    pub fn new(op_codes: &[(&str, u8, bool, fn(Context) -> Context)])
+    -> HumanReadableParser {
+        let mut op_codes_map = HashMap::new();
+
+        for op_code in op_codes.iter()
+            .map(|op| (op.0.to_string(), op.1)) {
+                op_codes_map.insert(op_code.0, op_code.1);
+            };
+
+        HumanReadableParser {
+            op_codes_map: op_codes_map
+        }
+    }
+
+    fn parse_hex(&self, token: &str) -> Result<Vec<u8>, String> {
+        let re = Regex::new(r"0x(?P<h>[0-9a-fA-F]+)").unwrap();
+        let hex = re.replace_all(token, "$h").from_hex();
+
+        match hex {
+            Ok(x) => Ok(x),
+            Err(_) => {
+                Err(format!("Token not recognized `{}`\n", token))
+            },
+        }
+    }
+
+    fn get_op_codes(&self, token: &str) -> Result<Vec<u8>, String> {
+        match self.op_codes_map.get(&token.to_string()) {
+            Some(x) => Ok(vec![*x]),
+            None => self.parse_hex(token),
+        }
+    }
+
+    pub fn parse(&self, script: &str) -> Result<Vec<u8>, String> {
+        let mut result: Vec<u8> = vec![];
+
+        for s in script.split(" ") {
+            let op_codes = self.get_op_codes(s);
+            match op_codes {
+                Err(x) => return Err(x),
+                Ok(x) => {
+                    for op_code in x {
+                        result.push(op_code);
+                    };
+                },
+            };
+        }
+
+        Ok(result)
     }
 }
 
@@ -360,9 +381,9 @@ mod tests {
 
         let data = parser.parse_human_readable(script);
     
-        match data {
-            Ok(_) => {},
-            Err(x) => print!("Error: {}\n", x),
+        match &data {
+            &Ok(_) => {},
+            &Err(ref x) => print!("Error: {}\n", x),
         }
 
         assert!(data.is_ok());
