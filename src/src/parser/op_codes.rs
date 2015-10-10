@@ -69,6 +69,13 @@ pub fn op_depth(context: Context) -> Context {
     new_context
 }
 
+pub fn op_drop(context: Context) -> Context {
+    let mut new_context = context;
+    new_context.stack.pop();
+
+    new_context
+}
+
 pub fn op_hash256(context: Context) -> Context {
     let mut new_context = context;
     let last = new_context.stack.pop().unwrap();
@@ -243,7 +250,7 @@ impl<'a> cmp::PartialEq for Context<'a> {
 pub const OP_PUSHDATA : (&'static str, u8, bool, fn(Context) -> Context) =
     ("PUSHDATA",     0x01, false, op_pushdata);
 
-pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 33] = [
+pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 34] = [
     ("0",            0x00, false, op_false),
     // opcodes 0x02 - 0x4b op_pushdata
     ("1NEGATE",      0x4f, false, op_1negate),
@@ -276,6 +283,7 @@ pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 33] = [
     // TODO: opcodes 0x6b - 0x75
     ("IFDUP",        0x73, false, op_ifdup),
     ("DEPTH",        0x74, false, op_depth),
+    ("DROP",         0x75, false, op_drop),
     ("DUP",          0x76, false, op_dup),
     // TODO: opcodes 0x77 - 0x87
     ("EQUAL",        0x87, false, op_equal),
@@ -548,18 +556,26 @@ mod tests {
         op_ifdup(get_context(vec![]));
     }
 
-    fn test_op_depth_base(stack: Vec<Vec<u8>>, expected: Vec<Vec<u8>>) {
-        let output = op_depth(get_context(stack));
+    fn test_stack_base(op: fn(Context) -> Context, stack: Vec<Vec<u8>>,
+                       expected: Vec<Vec<u8>>) {
+        let output = op(get_context(stack));
         assert_eq!(output, get_context(expected));
     }
 
     #[test]
     fn test_op_depth() {
-        test_op_depth_base(vec![], vec![vec![ZERO]]);
-        test_op_depth_base(vec![vec![0x01]], vec![vec![0x01], vec![0x7f]]);
-        test_op_depth_base(vec![vec![0x01], vec![0x02]],
-                           vec![vec![0x01], vec![0x02], vec![0x7e]]);
-        test_op_depth_base(vec![vec![0x01], vec![0x02], vec![0x03]],
-                           vec![vec![0x01], vec![0x02], vec![0x03], vec![0x7d]]);
+        test_stack_base(op_depth, vec![], vec![vec![ZERO]]);
+        test_stack_base(op_depth, vec![vec![0x01]], vec![vec![0x01], vec![0x7f]]);
+        test_stack_base(op_depth, vec![vec![0x01], vec![0x02]],
+                        vec![vec![0x01], vec![0x02], vec![0x7e]]);
+        test_stack_base(op_depth, vec![vec![0x01], vec![0x02], vec![0x03]],
+                        vec![vec![0x01], vec![0x02], vec![0x03], vec![0x7d]]);
+    }
+
+    #[test]
+    fn test_op_drop() {
+        test_stack_base(op_drop, vec![], vec![]);
+        test_stack_base(op_drop, vec![vec![ONE]], vec![]);
+        test_stack_base(op_drop, vec![vec![ONE], vec![ONE]], vec![vec![ONE]]);
     }
 }

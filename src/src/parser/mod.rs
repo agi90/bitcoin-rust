@@ -393,5 +393,9 @@ mod tests {
         test_parse_execute("1 1 1 1 1 1 1 1 1 1 1 1 1 1 DEPTH 14 EQUAL", true);
         test_parse_execute("1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 DEPTH 15 EQUAL", true);
         test_parse_execute("1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 DEPTH 16 EQUAL", true);
+
+        test_parse_execute("DROP DEPTH 0 EQUAL", true);
+        test_parse_execute("1 DROP DEPTH 0 EQUAL", true);
+        test_parse_execute("1 1 DROP DEPTH 1 EQUAL", true);
     }
 }
