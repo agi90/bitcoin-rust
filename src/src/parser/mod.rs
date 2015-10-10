@@ -375,5 +375,23 @@ mod tests {
 
         test_parse_execute("0 1 IFDUP EQUALVERIFY 1", true);
         test_parse_execute("1 0 IFDUP EQUALVERIFY 1", false);
+
+        test_parse_execute("DEPTH 0 EQUAL", true);
+        test_parse_execute("1 DEPTH 1 EQUAL", true);
+        test_parse_execute("1 1 DEPTH 2 EQUAL", true);
+        test_parse_execute("1 1 1 DEPTH 3 EQUAL", true);
+        test_parse_execute("1 1 1 1 DEPTH 4 EQUAL", true);
+        test_parse_execute("1 1 1 1 1 DEPTH 5 EQUAL", true);
+        test_parse_execute("1 1 1 1 1 1 DEPTH 6 EQUAL", true);
+        test_parse_execute("1 1 1 1 1 1 1 DEPTH 7 EQUAL", true);
+        test_parse_execute("1 1 1 1 1 1 1 1 DEPTH 8 EQUAL", true);
+        test_parse_execute("1 1 1 1 1 1 1 1 1 DEPTH 9 EQUAL", true);
+        test_parse_execute("1 1 1 1 1 1 1 1 1 1 DEPTH 10 EQUAL", true);
+        test_parse_execute("1 1 1 1 1 1 1 1 1 1 1 DEPTH 11 EQUAL", true);
+        test_parse_execute("1 1 1 1 1 1 1 1 1 1 1 1 DEPTH 12 EQUAL", true);
+        test_parse_execute("1 1 1 1 1 1 1 1 1 1 1 1 1 DEPTH 13 EQUAL", true);
+        test_parse_execute("1 1 1 1 1 1 1 1 1 1 1 1 1 1 DEPTH 14 EQUAL", true);
+        test_parse_execute("1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 DEPTH 15 EQUAL", true);
+        test_parse_execute("1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 DEPTH 16 EQUAL", true);
     }
 }
