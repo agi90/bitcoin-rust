@@ -76,6 +76,18 @@ pub fn op_drop(context: Context) -> Context {
     new_context
 }
 
+pub fn op_nip(context: Context) -> Context {
+    assert!(context.stack.len() >= 1);
+
+    let mut new_context = context;
+    let el = new_context.stack.pop().unwrap();
+    new_context.stack.pop();
+    new_context.stack.push(el);
+
+    new_context
+
+}
+
 pub fn op_hash256(context: Context) -> Context {
     let mut new_context = context;
     let last = new_context.stack.pop().unwrap();
@@ -250,7 +262,7 @@ impl<'a> cmp::PartialEq for Context<'a> {
 pub const OP_PUSHDATA : (&'static str, u8, bool, fn(Context) -> Context) =
     ("PUSHDATA",     0x01, false, op_pushdata);
 
-pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 34] = [
+pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 35] = [
     ("0",            0x00, false, op_false),
     // opcodes 0x02 - 0x4b op_pushdata
     ("1NEGATE",      0x4f, false, op_1negate),
@@ -280,12 +292,13 @@ pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 34] = [
     // TODO: opcodes 0x62 - 0x68
     ("VERIFY",       0x69, false, op_verify),
     ("RETURN",       0x6a, false, op_return),
-    // TODO: opcodes 0x6b - 0x75
+    // TODO: opcodes 0x6b - 0x72
     ("IFDUP",        0x73, false, op_ifdup),
     ("DEPTH",        0x74, false, op_depth),
     ("DROP",         0x75, false, op_drop),
     ("DUP",          0x76, false, op_dup),
-    // TODO: opcodes 0x77 - 0x87
+    ("NIP",          0x77, false, op_nip),
+    // TODO: opcodes 0x78 - 0x87
     ("EQUAL",        0x87, false, op_equal),
     ("EQUALVERIFY",  0x88, false, op_equalverify),
     // TODO: opcodes 0x89 - 0xa8
@@ -577,5 +590,12 @@ mod tests {
         test_stack_base(op_drop, vec![], vec![]);
         test_stack_base(op_drop, vec![vec![ONE]], vec![]);
         test_stack_base(op_drop, vec![vec![ONE], vec![ONE]], vec![vec![ONE]]);
+    }
+
+    #[test]
+    fn test_op_nip() {
+        test_stack_base(op_nip, vec![vec![ONE]], vec![vec![ONE]]);
+        test_stack_base(op_nip, vec![vec![0x02], vec![ONE]], vec![vec![ONE]]);
+        test_stack_base(op_nip, vec![vec![0x03], vec![0x02], vec![ONE]], vec![vec![0x03], vec![ONE]]);
     }
 }
