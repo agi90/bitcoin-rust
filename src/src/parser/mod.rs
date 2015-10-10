@@ -420,5 +420,9 @@ mod tests {
         test_parse_execute("1 0 SWAP 1 EQUALVERIFY 0 EQUAL", true);
         test_parse_execute("1 0 SWAP SWAP 0 EQUALVERIFY 1 EQUAL", true);
         test_parse_execute("1 2 SWAP 1 EQUALVERIFY 2 EQUAL", true);
+
+        test_parse_execute("1 1 2DROP DEPTH 0 EQUAL", true);
+        test_parse_execute("1 1 1 2DROP DEPTH 1 EQUAL", true);
+        test_parse_execute("1 1 1 1 2DROP DEPTH 2 EQUAL", true);
     }
 }

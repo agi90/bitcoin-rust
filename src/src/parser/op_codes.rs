@@ -149,6 +149,10 @@ pub fn op_roll(context: Context) -> Context {
 pub fn op_rot(context: Context)  -> Context { roll(context, 2) }
 pub fn op_swap(context: Context) -> Context { roll(context, 1) }
 
+pub fn op_2drop(context: Context) -> Context {
+    op_drop(op_drop(context))
+}
+
 pub fn op_hash256(context: Context) -> Context {
     let mut new_context = context;
     let last = new_context.stack.pop().unwrap();
@@ -323,7 +327,7 @@ impl<'a> cmp::PartialEq for Context<'a> {
 pub const OP_PUSHDATA : (&'static str, u8, bool, fn(Context) -> Context) =
     ("PUSHDATA",     0x01, false, op_pushdata);
 
-pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 40] = [
+pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 41] = [
     ("0",            0x00, false, op_false),
     // opcodes 0x02 - 0x4b op_pushdata
     ("1NEGATE",      0x4f, false, op_1negate),
@@ -353,7 +357,9 @@ pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 40] = [
     // TODO: opcodes 0x62 - 0x68
     ("VERIFY",       0x69, false, op_verify),
     ("RETURN",       0x6a, false, op_return),
-    // TODO: opcodes 0x6b - 0x72
+    // TODO: opcodes 0x6b - 0x6c
+    ("2DROP",        0x6d, false, op_2drop),
+    // TODO: opcodes 0x6e - 0x72
     ("IFDUP",        0x73, false, op_ifdup),
     ("DEPTH",        0x74, false, op_depth),
     ("DROP",         0x75, false, op_drop),
@@ -698,5 +704,13 @@ mod tests {
     fn test_op_swap() {
         test_stack_base(op_swap, vec![vec![0x01], vec![0x02], vec![0x03]],
                                  vec![vec![0x01], vec![0x03], vec![0x02]]);
+    }
+
+    #[test]
+    fn test_op_2drop() {
+        test_stack_base(op_2drop, vec![vec![0x01], vec![0x02], vec![0x03]],
+                                  vec![vec![0x01]]);
+        test_stack_base(op_2drop, vec![vec![0x01], vec![0x02]],
+                                  vec![]);
     }
 }
