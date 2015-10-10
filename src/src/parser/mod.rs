@@ -413,5 +413,12 @@ mod tests {
         test_parse_execute("1 0 ROLL 1 EQUAL", true);
         test_parse_execute("3 2 1 ROLL 3 EQUALVERIFY 2 EQUAL", true);
         test_parse_execute("4 3 2 2 ROLL 4 EQUALVERIFY 2 EQUALVERIFY 3 EQUAL", true);
+
+        test_parse_execute("1 2 3 ROT 1 EQUALVERIFY 3 EQUALVERIFY 2 EQUAL", true);
+        test_parse_execute("1 2 3 ROT ROT ROT 3 EQUALVERIFY 2 EQUALVERIFY 1 EQUAL", true);
+
+        test_parse_execute("1 0 SWAP 1 EQUALVERIFY 0 EQUAL", true);
+        test_parse_execute("1 0 SWAP SWAP 0 EQUALVERIFY 1 EQUAL", true);
+        test_parse_execute("1 2 SWAP 1 EQUALVERIFY 2 EQUAL", true);
     }
 }

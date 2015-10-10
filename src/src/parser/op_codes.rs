@@ -125,12 +125,10 @@ pub fn op_pick(context: Context) -> Context {
     pick(new_context, size as usize)
 }
 
-pub fn op_roll(context: Context) -> Context {
-    assert!(context.stack.len() > 0);
+fn roll(context: Context, size: u8) -> Context {
+    assert!(size == 0x00 || context.stack.len() > size as usize - 1);
 
     let mut new_context = context;
-    let size = get_number_arr(new_context.stack.pop().unwrap());
-    assert!(size == 0x00 || new_context.stack.len() > size as usize - 1);
 
     let pos = new_context.stack.len() - 1 - size as usize;
     let el = new_context.stack.remove(pos);
@@ -138,6 +136,18 @@ pub fn op_roll(context: Context) -> Context {
 
     new_context
 }
+
+pub fn op_roll(context: Context) -> Context {
+    assert!(context.stack.len() > 0);
+
+    let mut new_context = context;
+    let size = get_number_arr(new_context.stack.pop().unwrap());
+
+    roll(new_context, size)
+}
+
+pub fn op_rot(context: Context)  -> Context { roll(context, 2) }
+pub fn op_swap(context: Context) -> Context { roll(context, 1) }
 
 pub fn op_hash256(context: Context) -> Context {
     let mut new_context = context;
@@ -313,7 +323,7 @@ impl<'a> cmp::PartialEq for Context<'a> {
 pub const OP_PUSHDATA : (&'static str, u8, bool, fn(Context) -> Context) =
     ("PUSHDATA",     0x01, false, op_pushdata);
 
-pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 38] = [
+pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 40] = [
     ("0",            0x00, false, op_false),
     // opcodes 0x02 - 0x4b op_pushdata
     ("1NEGATE",      0x4f, false, op_1negate),
@@ -352,6 +362,8 @@ pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 38] = [
     ("OVER",         0x78, false, op_over),
     ("PICK",         0x79, false, op_pick),
     ("ROLL",         0x7a, false, op_roll),
+    ("ROT",          0x7b, false, op_rot),
+    ("SWAP",         0x7c, false, op_swap),
     // TODO: opcodes 0x7a - 0x87
     ("EQUAL",        0x87, false, op_equal),
     ("EQUALVERIFY",  0x88, false, op_equalverify),
@@ -674,5 +686,17 @@ mod tests {
                                  vec![vec![0x04], vec![0x02], vec![0x03]]);
         test_stack_base(op_roll, vec![vec![0x04], vec![0x03], vec![0x02], vec![]],
                                  vec![vec![0x04], vec![0x03], vec![0x02]]);
+    }
+
+    #[test]
+    fn test_op_rot() {
+        test_stack_base(op_rot, vec![vec![0x01], vec![0x02], vec![0x03]],
+                                vec![vec![0x02], vec![0x03], vec![0x01]]);
+    }
+
+    #[test]
+    fn test_op_swap() {
+        test_stack_base(op_swap, vec![vec![0x01], vec![0x02], vec![0x03]],
+                                 vec![vec![0x01], vec![0x03], vec![0x02]]);
     }
 }
