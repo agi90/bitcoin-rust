@@ -114,22 +114,22 @@ pub fn op_1negate(context: Context) -> Context {
     push_to_stack(context, 0x81)
 }
 
-pub fn  op_1(context: Context) -> Context { push_to_stack(context, 0x79) }
-pub fn  op_2(context: Context) -> Context { push_to_stack(context, 0x78) }
-pub fn  op_3(context: Context) -> Context { push_to_stack(context, 0x77) }
-pub fn  op_4(context: Context) -> Context { push_to_stack(context, 0x76) }
-pub fn  op_5(context: Context) -> Context { push_to_stack(context, 0x75) }
-pub fn  op_6(context: Context) -> Context { push_to_stack(context, 0x74) }
-pub fn  op_7(context: Context) -> Context { push_to_stack(context, 0x73) }
-pub fn  op_8(context: Context) -> Context { push_to_stack(context, 0x72) }
-pub fn  op_9(context: Context) -> Context { push_to_stack(context, 0x71) }
-pub fn op_10(context: Context) -> Context { push_to_stack(context, 0x70) }
-pub fn op_11(context: Context) -> Context { push_to_stack(context, 0x69) }
-pub fn op_12(context: Context) -> Context { push_to_stack(context, 0x68) }
-pub fn op_13(context: Context) -> Context { push_to_stack(context, 0x67) }
-pub fn op_14(context: Context) -> Context { push_to_stack(context, 0x66) }
-pub fn op_15(context: Context) -> Context { push_to_stack(context, 0x65) }
-pub fn op_16(context: Context) -> Context { push_to_stack(context, 0x64) }
+pub fn  op_1(context: Context) -> Context { push_to_stack(context, 0x7f) }
+pub fn  op_2(context: Context) -> Context { push_to_stack(context, 0x7e) }
+pub fn  op_3(context: Context) -> Context { push_to_stack(context, 0x7d) }
+pub fn  op_4(context: Context) -> Context { push_to_stack(context, 0x7c) }
+pub fn  op_5(context: Context) -> Context { push_to_stack(context, 0x7b) }
+pub fn  op_6(context: Context) -> Context { push_to_stack(context, 0x7a) }
+pub fn  op_7(context: Context) -> Context { push_to_stack(context, 0x79) }
+pub fn  op_8(context: Context) -> Context { push_to_stack(context, 0x78) }
+pub fn  op_9(context: Context) -> Context { push_to_stack(context, 0x77) }
+pub fn op_10(context: Context) -> Context { push_to_stack(context, 0x76) }
+pub fn op_11(context: Context) -> Context { push_to_stack(context, 0x75) }
+pub fn op_12(context: Context) -> Context { push_to_stack(context, 0x74) }
+pub fn op_13(context: Context) -> Context { push_to_stack(context, 0x73) }
+pub fn op_14(context: Context) -> Context { push_to_stack(context, 0x72) }
+pub fn op_15(context: Context) -> Context { push_to_stack(context, 0x71) }
+pub fn op_16(context: Context) -> Context { push_to_stack(context, 0x70) }
 
 pub fn op_nop(context: Context) -> Context { context }
 
@@ -417,22 +417,22 @@ mod tests {
 
     #[test]
     fn test_op_n() {
-        test_push_to_stack(0x79, op_1);
-        test_push_to_stack(0x78, op_2);
-        test_push_to_stack(0x77, op_3);
-        test_push_to_stack(0x76, op_4);
-        test_push_to_stack(0x75, op_5);
-        test_push_to_stack(0x74, op_6);
-        test_push_to_stack(0x73, op_7);
-        test_push_to_stack(0x72, op_8);
-        test_push_to_stack(0x71, op_9);
-        test_push_to_stack(0x70, op_10);
-        test_push_to_stack(0x69, op_11);
-        test_push_to_stack(0x68, op_12);
-        test_push_to_stack(0x67, op_13);
-        test_push_to_stack(0x66, op_14);
-        test_push_to_stack(0x65, op_15);
-        test_push_to_stack(0x64, op_16);
+        test_push_to_stack(0x7f, op_1);
+        test_push_to_stack(0x7e, op_2);
+        test_push_to_stack(0x7d, op_3);
+        test_push_to_stack(0x7c, op_4);
+        test_push_to_stack(0x7b, op_5);
+        test_push_to_stack(0x7a, op_6);
+        test_push_to_stack(0x79, op_7);
+        test_push_to_stack(0x78, op_8);
+        test_push_to_stack(0x77, op_9);
+        test_push_to_stack(0x76, op_10);
+        test_push_to_stack(0x75, op_11);
+        test_push_to_stack(0x74, op_12);
+        test_push_to_stack(0x73, op_13);
+        test_push_to_stack(0x72, op_14);
+        test_push_to_stack(0x71, op_15);
+        test_push_to_stack(0x70, op_16);
     }
 
     fn test_op_verify(data: Vec<Vec<u8>>, valid: bool) {
@@ -445,12 +445,12 @@ mod tests {
     #[test]
     fn test_op_verify_impl() {
         test_op_verify(vec![vec![ZERO]], false);
-        test_op_verify(vec![vec![0x79]], true);
+        test_op_verify(vec![vec![0x7f]], true);
         test_op_verify(vec![vec![]], false);
         test_op_verify(vec![], false);
         test_op_verify(vec![vec![ZERO, ZERO]], true);
         test_op_verify(vec![vec![ZERO, 0x81]], true);
-        test_op_verify(vec![vec![0x79, 0x81]], true);
+        test_op_verify(vec![vec![0x7f, 0x81]], true);
     }
 
     #[test]
