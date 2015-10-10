@@ -153,6 +153,14 @@ pub fn op_2drop(context: Context) -> Context {
     op_drop(op_drop(context))
 }
 
+pub fn op_2dup(context: Context) -> Context {
+    pick(pick(context, 1), 1)
+}
+
+pub fn op_3dup(context: Context) -> Context {
+    pick(pick(pick(context, 2), 2), 2)
+}
+
 pub fn op_hash256(context: Context) -> Context {
     let mut new_context = context;
     let last = new_context.stack.pop().unwrap();
@@ -327,7 +335,7 @@ impl<'a> cmp::PartialEq for Context<'a> {
 pub const OP_PUSHDATA : (&'static str, u8, bool, fn(Context) -> Context) =
     ("PUSHDATA",     0x01, false, op_pushdata);
 
-pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 41] = [
+pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 43] = [
     ("0",            0x00, false, op_false),
     // opcodes 0x02 - 0x4b op_pushdata
     ("1NEGATE",      0x4f, false, op_1negate),
@@ -359,7 +367,9 @@ pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 41] = [
     ("RETURN",       0x6a, false, op_return),
     // TODO: opcodes 0x6b - 0x6c
     ("2DROP",        0x6d, false, op_2drop),
-    // TODO: opcodes 0x6e - 0x72
+    ("2DUP",         0x6e, false, op_2dup),
+    ("3DUP",         0x6f, false, op_3dup),
+    // TODO: opcodes 0x70 - 0x72
     ("IFDUP",        0x73, false, op_ifdup),
     ("DEPTH",        0x74, false, op_depth),
     ("DROP",         0x75, false, op_drop),
@@ -712,5 +722,19 @@ mod tests {
                                   vec![vec![0x01]]);
         test_stack_base(op_2drop, vec![vec![0x01], vec![0x02]],
                                   vec![]);
+    }
+
+    #[test]
+    fn test_op_2dup() {
+        test_stack_base(op_2dup, vec![vec![0x01], vec![0x02], vec![0x03]],
+                                 vec![vec![0x01], vec![0x02], vec![0x03], vec![0x02], vec![0x03]]);
+        test_stack_base(op_2dup, vec![vec![0x02], vec![0x03]],
+                                 vec![vec![0x02], vec![0x03], vec![0x02], vec![0x03]]);
+    }
+
+    #[test]
+    fn test_op_3dup() {
+        test_stack_base(op_3dup, vec![vec![0x01], vec![0x02], vec![0x03]],
+                                 vec![vec![0x01], vec![0x02], vec![0x03], vec![0x01], vec![0x02], vec![0x03]]);
     }
 }

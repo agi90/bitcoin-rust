@@ -424,5 +424,11 @@ mod tests {
         test_parse_execute("1 1 2DROP DEPTH 0 EQUAL", true);
         test_parse_execute("1 1 1 2DROP DEPTH 1 EQUAL", true);
         test_parse_execute("1 1 1 1 2DROP DEPTH 2 EQUAL", true);
+
+        test_parse_execute("1 2 2DUP 2 EQUALVERIFY 1 EQUALVERIFY 2 EQUALVERIFY 1 EQUAL", true);
+        test_parse_execute("2 3 2DUP 3 EQUALVERIFY 2 EQUALVERIFY 3 EQUALVERIFY 2 EQUAL", true);
+        test_parse_execute("1 2 3 3DUP 3 EQUALVERIFY 2 EQUALVERIFY 1 EQUALVERIFY 3 EQUALVERIFY 2 EQUALVERIFY 1 EQUAL", true);
+        test_parse_execute("2 3 4 3DUP 4 EQUALVERIFY 3 EQUALVERIFY 2 EQUALVERIFY 4 EQUALVERIFY 3 EQUALVERIFY 2 EQUAL", true);
+        test_parse_execute("1 1 1 3DUP 3DUP 3DUP DEPTH 12 EQUAL", true);
     }
 }
