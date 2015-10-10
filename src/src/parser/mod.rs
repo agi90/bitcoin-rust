@@ -401,5 +401,9 @@ mod tests {
         test_parse_execute("1 NIP 1 EQUAL", true);
         test_parse_execute("2 1 NIP 1 EQUAL", true);
         test_parse_execute("3 2 1 NIP 1 EQUALVERIFY 3 EQUAL", true);
+
+        test_parse_execute("1 2 3 OVER 2 EQUALVERIFY 3 EQUALVERIFY 2 EQUALVERIFY 1 EQUAL", true);
+        test_parse_execute("1 2 OVER 1 EQUALVERIFY 2 EQUALVERIFY 1 EQUAL", true);
+        test_parse_execute("2 1 OVER EQUALVERIFY", false);
     }
 }

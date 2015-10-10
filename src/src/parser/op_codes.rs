@@ -85,7 +85,16 @@ pub fn op_nip(context: Context) -> Context {
     new_context.stack.push(el);
 
     new_context
+}
 
+pub fn op_over(context: Context) -> Context {
+    assert!(context.stack.len() >= 2);
+
+    let mut new_context = context;
+    let el = new_context.stack.get(new_context.stack.len() - 2).unwrap().clone();
+    new_context.stack.push(el);
+
+    new_context
 }
 
 pub fn op_hash256(context: Context) -> Context {
@@ -262,7 +271,7 @@ impl<'a> cmp::PartialEq for Context<'a> {
 pub const OP_PUSHDATA : (&'static str, u8, bool, fn(Context) -> Context) =
     ("PUSHDATA",     0x01, false, op_pushdata);
 
-pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 35] = [
+pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 36] = [
     ("0",            0x00, false, op_false),
     // opcodes 0x02 - 0x4b op_pushdata
     ("1NEGATE",      0x4f, false, op_1negate),
@@ -298,7 +307,8 @@ pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 35] = [
     ("DROP",         0x75, false, op_drop),
     ("DUP",          0x76, false, op_dup),
     ("NIP",          0x77, false, op_nip),
-    // TODO: opcodes 0x78 - 0x87
+    ("OVER",         0x78, false, op_over),
+    // TODO: opcodes 0x77 - 0x87
     ("EQUAL",        0x87, false, op_equal),
     ("EQUALVERIFY",  0x88, false, op_equalverify),
     // TODO: opcodes 0x89 - 0xa8
@@ -597,5 +607,10 @@ mod tests {
         test_stack_base(op_nip, vec![vec![ONE]], vec![vec![ONE]]);
         test_stack_base(op_nip, vec![vec![0x02], vec![ONE]], vec![vec![ONE]]);
         test_stack_base(op_nip, vec![vec![0x03], vec![0x02], vec![ONE]], vec![vec![0x03], vec![ONE]]);
+    }
+
+    #[test]
+    fn test_op_over() {
+        test_stack_base(op_over, vec![vec![0x02], vec![ONE]], vec![vec![0x02], vec![ONE], vec![0x02]]);
     }
 }
