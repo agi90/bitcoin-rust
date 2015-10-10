@@ -238,7 +238,7 @@ impl Parser {
         let mut context = Context::new(parsed_script, input_stack);
         let mut done = false;
 
-        while !done {
+        while !done && context.valid {
             let ref advancing = context.data.op_code.advancing;
             let ref parser = context.data.op_code.parser;
 
