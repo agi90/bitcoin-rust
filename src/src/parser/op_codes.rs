@@ -83,7 +83,12 @@ pub fn op_equalverify(context: Context) -> Context {
     let x = new_context.stack.pop().unwrap();
     let y = new_context.stack.pop().unwrap();
 
-    new_context.valid = x.eq(&y);
+    new_context.valid =
+        if !is_true(&Some(&x)) && !is_true(&Some(&y)) {
+            true
+        } else {
+            x.eq(&y)
+        };
 
     new_context
 }
@@ -324,6 +329,26 @@ mod tests {
         let context = get_context(vec![]);
         op_dup(context);
     }
+
+    #[test]
+    fn test_op_equalverify_zero_false() {
+        let context = get_context(vec![vec![], vec![0x7f]]);
+        let output = op_equalverify(context);
+
+        let mut expected = get_context(vec![]);
+        expected.valid = false;
+
+        assert_eq!(expected, output);
+    }
+
+    #[test]
+    fn test_op_equalverify_zero_true() {
+        let context = get_context(vec![vec![], vec![ZERO]]);
+        let output = op_equalverify(context);
+
+        assert_eq!(get_context(vec![]), output);
+    }
+
 
     #[test]
     fn test_op_equalverify_true() {
