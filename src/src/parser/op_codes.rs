@@ -40,13 +40,7 @@ fn sha256(input : Vec<u8>) -> Vec<u8> {
 }
 
 pub fn op_dup(context: Context) -> Context {
-    assert!(context.stack.len() > 0);
-
-    let mut new_context = context;
-    let last = new_context.stack.last().unwrap().clone();
-    new_context.stack.push(last);
-
-    new_context
+    pick(context, 0)
 }
 
 pub fn op_ifdup(context: Context) -> Context {
@@ -59,11 +53,31 @@ pub fn op_ifdup(context: Context) -> Context {
     context
 }
 
+/*
+ * Numbers in bitcoin are stored as little-endian integers
+ * while we use unsigned integers. This function
+ * converts from unsigned to little-endian integers when needed.
+ */
+fn get_number(x: u8) -> u8 {
+    assert!(x <= ZERO);
+
+    ZERO - x
+}
+
+fn get_number_arr(x: Vec<u8>) -> u8 {
+    assert!(x.len() <= 1);
+
+    match x.last() {
+        Some(x) => get_number(*x),
+        None => 0x00,
+    }
+}
+
 pub fn op_depth(context: Context) -> Context {
     assert!(context.stack.len() <= 0x7f);
 
     let mut new_context = context;
-    let size: u8 = 0x80 - new_context.stack.len() as u8;
+    let size = get_number(new_context.stack.len() as u8);
     new_context.stack.push(vec![size]);
 
     new_context
@@ -87,14 +101,28 @@ pub fn op_nip(context: Context) -> Context {
     new_context
 }
 
-pub fn op_over(context: Context) -> Context {
-    assert!(context.stack.len() >= 2);
+fn pick(context: Context, depth: usize) -> Context {
+    assert!(context.stack.len() >= depth + 1);
 
     let mut new_context = context;
-    let el = new_context.stack.get(new_context.stack.len() - 2).unwrap().clone();
+    let el = new_context.stack.get(new_context.stack.len() - depth - 1).unwrap().clone();
     new_context.stack.push(el);
 
     new_context
+}
+
+pub fn op_over(context: Context) -> Context {
+    pick(context, 1)
+}
+
+pub fn op_pick(context: Context) -> Context {
+    assert!(context.stack.len() > 0);
+
+    let mut new_context = context;
+    let el = new_context.stack.pop().unwrap();
+    let size = get_number_arr(el);
+
+    pick(new_context, size as usize)
 }
 
 pub fn op_hash256(context: Context) -> Context {
@@ -166,22 +194,22 @@ pub fn op_1negate(context: Context) -> Context {
     push_to_stack(context, 0x81)
 }
 
-pub fn  op_1(context: Context) -> Context { push_to_stack(context, 0x7f) }
-pub fn  op_2(context: Context) -> Context { push_to_stack(context, 0x7e) }
-pub fn  op_3(context: Context) -> Context { push_to_stack(context, 0x7d) }
-pub fn  op_4(context: Context) -> Context { push_to_stack(context, 0x7c) }
-pub fn  op_5(context: Context) -> Context { push_to_stack(context, 0x7b) }
-pub fn  op_6(context: Context) -> Context { push_to_stack(context, 0x7a) }
-pub fn  op_7(context: Context) -> Context { push_to_stack(context, 0x79) }
-pub fn  op_8(context: Context) -> Context { push_to_stack(context, 0x78) }
-pub fn  op_9(context: Context) -> Context { push_to_stack(context, 0x77) }
-pub fn op_10(context: Context) -> Context { push_to_stack(context, 0x76) }
-pub fn op_11(context: Context) -> Context { push_to_stack(context, 0x75) }
-pub fn op_12(context: Context) -> Context { push_to_stack(context, 0x74) }
-pub fn op_13(context: Context) -> Context { push_to_stack(context, 0x73) }
-pub fn op_14(context: Context) -> Context { push_to_stack(context, 0x72) }
-pub fn op_15(context: Context) -> Context { push_to_stack(context, 0x71) }
-pub fn op_16(context: Context) -> Context { push_to_stack(context, 0x70) }
+pub fn  op_1(context: Context) -> Context { push_to_stack(context, get_number(0x01)) }
+pub fn  op_2(context: Context) -> Context { push_to_stack(context, get_number(0x02)) }
+pub fn  op_3(context: Context) -> Context { push_to_stack(context, get_number(0x03)) }
+pub fn  op_4(context: Context) -> Context { push_to_stack(context, get_number(0x04)) }
+pub fn  op_5(context: Context) -> Context { push_to_stack(context, get_number(0x05)) }
+pub fn  op_6(context: Context) -> Context { push_to_stack(context, get_number(0x06)) }
+pub fn  op_7(context: Context) -> Context { push_to_stack(context, get_number(0x07)) }
+pub fn  op_8(context: Context) -> Context { push_to_stack(context, get_number(0x08)) }
+pub fn  op_9(context: Context) -> Context { push_to_stack(context, get_number(0x09)) }
+pub fn op_10(context: Context) -> Context { push_to_stack(context, get_number(0x0a)) }
+pub fn op_11(context: Context) -> Context { push_to_stack(context, get_number(0x0b)) }
+pub fn op_12(context: Context) -> Context { push_to_stack(context, get_number(0x0c)) }
+pub fn op_13(context: Context) -> Context { push_to_stack(context, get_number(0x0d)) }
+pub fn op_14(context: Context) -> Context { push_to_stack(context, get_number(0x0e)) }
+pub fn op_15(context: Context) -> Context { push_to_stack(context, get_number(0x0f)) }
+pub fn op_16(context: Context) -> Context { push_to_stack(context, get_number(0x10)) }
 
 pub fn op_nop(context: Context) -> Context { context }
 
@@ -271,7 +299,7 @@ impl<'a> cmp::PartialEq for Context<'a> {
 pub const OP_PUSHDATA : (&'static str, u8, bool, fn(Context) -> Context) =
     ("PUSHDATA",     0x01, false, op_pushdata);
 
-pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 36] = [
+pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 37] = [
     ("0",            0x00, false, op_false),
     // opcodes 0x02 - 0x4b op_pushdata
     ("1NEGATE",      0x4f, false, op_1negate),
@@ -308,7 +336,8 @@ pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 36] = [
     ("DUP",          0x76, false, op_dup),
     ("NIP",          0x77, false, op_nip),
     ("OVER",         0x78, false, op_over),
-    // TODO: opcodes 0x77 - 0x87
+    ("PICK",         0x79, false, op_pick),
+    // TODO: opcodes 0x7a - 0x87
     ("EQUAL",        0x87, false, op_equal),
     ("EQUALVERIFY",  0x88, false, op_equalverify),
     // TODO: opcodes 0x89 - 0xa8
@@ -612,5 +641,12 @@ mod tests {
     #[test]
     fn test_op_over() {
         test_stack_base(op_over, vec![vec![0x02], vec![ONE]], vec![vec![0x02], vec![ONE], vec![0x02]]);
+    }
+
+    #[test]
+    fn test_op_pick() {
+        test_stack_base(op_pick, vec![vec![0x03], vec![0x02], vec![ONE]], vec![vec![0x03], vec![0x02], vec![0x03] ]);
+        test_stack_base(op_pick, vec![vec![0x04], vec![0x03], vec![0x02], vec![0x7e]],
+                                 vec![vec![0x04], vec![0x03], vec![0x02], vec![0x04]]);
     }
 }
