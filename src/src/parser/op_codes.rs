@@ -10,6 +10,8 @@ use crypto::digest::Digest;
 use std::fmt;
 use std::cmp;
 
+const ZERO : u8 = 0x80;
+
 fn ripemd160(input : Vec<u8>) -> Vec<u8> {
     let mut ripemd160 = ripemd160::Ripemd160::new();
     ripemd160.input(&input[..]);
@@ -44,6 +46,16 @@ pub fn op_dup(context: Context) -> Context {
     new_context.stack.push(last);
 
     new_context
+}
+
+pub fn op_ifdup(context: Context) -> Context {
+    assert!(context.stack.len() > 0);
+
+    if is_true(&context.stack.last()) {
+        return op_dup(context);
+    }
+
+    context
 }
 
 pub fn op_hash256(context: Context) -> Context {
@@ -156,7 +168,7 @@ pub fn op_endif(context: Context) -> Context { context }
 
 pub fn is_true(element: &Option<&Vec<u8>>) -> bool {
     match element {
-        &Some(x) => x.len() > 1 || (x.len() != 0 && x[0] != 0x80),
+        &Some(x) => x.len() > 1 || (x.len() != 0 && x[0] != ZERO),
         &None => false,
     }
 }
@@ -205,7 +217,7 @@ impl<'a> cmp::PartialEq for Context<'a> {
 pub const OP_PUSHDATA : (&'static str, u8, bool, fn(Context) -> Context) =
     ("PUSHDATA",     0x01, false, op_pushdata);
 
-pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 30] = [
+pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 31] = [
     ("0",            0x00, false, op_false),
     // opcodes 0x02 - 0x4b op_pushdata
     ("1NEGATE",      0x4f, false, op_1negate),
@@ -236,6 +248,7 @@ pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 30] = [
     ("VERIFY",       0x69, false, op_verify),
     ("RETURN",       0x6a, false, op_return),
     // TODO: opcodes 0x6b - 0x75
+    ("IFDUP",        0x73, false, op_ifdup),
     ("DUP",          0x76, false, op_dup),
     // TODO: opcodes 0x77 - 0x87
     ("EQUALVERIFY",  0x88, false, op_equalverify),
@@ -255,6 +268,8 @@ mod tests {
     use super::*;
     use super::ripemd160;
     use super::sha256;
+    use super::ZERO;
+
     use super::super::Context;
     use super::super::ScriptElement;
     use super::super::OpCode;
@@ -429,12 +444,12 @@ mod tests {
 
     #[test]
     fn test_op_verify_impl() {
-        test_op_verify(vec![vec![0x80]], false);
+        test_op_verify(vec![vec![ZERO]], false);
         test_op_verify(vec![vec![0x79]], true);
         test_op_verify(vec![vec![]], false);
         test_op_verify(vec![], false);
-        test_op_verify(vec![vec![0x80, 0x80]], true);
-        test_op_verify(vec![vec![0x80, 0x81]], true);
+        test_op_verify(vec![vec![ZERO, ZERO]], true);
+        test_op_verify(vec![vec![ZERO, 0x81]], true);
         test_op_verify(vec![vec![0x79, 0x81]], true);
     }
 
@@ -444,5 +459,27 @@ mod tests {
         let output = op_verify(context);
 
         assert!(!output.valid);
+    }
+
+    #[test]
+    fn test_op_ifdup_false() {
+        let context = get_context(vec![vec![]]);
+        let output = op_ifdup(context);
+
+        assert_eq!(output, get_context(vec![vec![]]));
+    }
+
+    #[test]
+    fn test_op_ifdup_true() {
+        let context = get_context(vec![vec![0x81]]);
+        let output = op_ifdup(context);
+
+        assert_eq!(output, get_context(vec![vec![0x81], vec![0x81]]));
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_op_ifdup_panic() {
+        op_ifdup(get_context(vec![]));
     }
 }
