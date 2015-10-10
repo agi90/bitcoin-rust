@@ -356,6 +356,11 @@ mod tests {
         test_parse_execute("1 0 IF IF 1 ELSE 0 ENDIF ENDIF", true);
         test_parse_execute("0 1 IF IF 1 ELSE 0 ENDIF ENDIF", false);
 
+        test_parse_execute("0 0 EQUAL", true);
+        test_parse_execute("1 0 EQUAL", false);
+        test_parse_execute("1 1 EQUAL", true);
+        test_parse_execute("1 2 EQUAL", false);
+
         test_parse_execute("0 1 1 EQUALVERIFY", false);
         test_parse_execute("1 1 1 EQUALVERIFY", true);
         test_parse_execute("1 1 2 EQUALVERIFY", false);
@@ -364,7 +369,7 @@ mod tests {
         test_parse_execute("1 IF 1 ELSE 0 ENDIF", true);
 
         test_parse_execute("1 1 VERIFY", true);
-        test_parse_execute("1 VERIFY", true);
+        test_parse_execute("1 VERIFY 1", true);
         test_parse_execute("1 VERIFY 0", false);
         test_parse_execute("0 VERIFY", false);
 

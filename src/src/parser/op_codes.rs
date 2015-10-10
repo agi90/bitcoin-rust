@@ -11,6 +11,7 @@ use std::fmt;
 use std::cmp;
 
 const ZERO : u8 = 0x80;
+const ONE : u8 = 0x7f;
 
 fn ripemd160(input : Vec<u8>) -> Vec<u8> {
     let mut ripemd160 = ripemd160::Ripemd160::new();
@@ -77,18 +78,26 @@ pub fn op_hash160(context: Context) -> Context {
 }
 
 pub fn op_equalverify(context: Context) -> Context {
+    op_verify(op_equal(context))
+}
+
+fn is_equal(x: Vec<u8>, y: Vec<u8>) -> bool {
+    if !is_true(&Some(&x)) && !is_true(&Some(&y)) {
+        true
+    } else {
+        x.eq(&y)
+    }
+}
+
+pub fn op_equal(context: Context) -> Context {
     assert!(context.stack.len() >= 2);
 
     let mut new_context = context;
     let x = new_context.stack.pop().unwrap();
     let y = new_context.stack.pop().unwrap();
 
-    new_context.valid =
-        if !is_true(&Some(&x)) && !is_true(&Some(&y)) {
-            true
-        } else {
-            x.eq(&y)
-        };
+    let result = if is_equal(x, y) { ONE } else { ZERO };
+    new_context.stack.push(vec![result]);
 
     new_context
 }
@@ -182,6 +191,8 @@ pub fn op_verify(context: Context) -> Context {
     let mut new_context = context;
 
     new_context.valid = is_true(&new_context.stack.last());
+    new_context.stack.pop();
+
     return new_context;
 }
 
@@ -222,7 +233,7 @@ impl<'a> cmp::PartialEq for Context<'a> {
 pub const OP_PUSHDATA : (&'static str, u8, bool, fn(Context) -> Context) =
     ("PUSHDATA",     0x01, false, op_pushdata);
 
-pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 31] = [
+pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 32] = [
     ("0",            0x00, false, op_false),
     // opcodes 0x02 - 0x4b op_pushdata
     ("1NEGATE",      0x4f, false, op_1negate),
@@ -256,6 +267,7 @@ pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 31] = [
     ("IFDUP",        0x73, false, op_ifdup),
     ("DUP",          0x76, false, op_dup),
     // TODO: opcodes 0x77 - 0x87
+    ("EQUAL",        0x87, false, op_equal),
     ("EQUALVERIFY",  0x88, false, op_equalverify),
     // TODO: opcodes 0x89 - 0xa8
     ("HASH160",      0xa9, false, op_hash160),
@@ -274,6 +286,7 @@ mod tests {
     use super::ripemd160;
     use super::sha256;
     use super::ZERO;
+    use super::ONE;
 
     use super::super::Context;
     use super::super::ScriptElement;
@@ -332,7 +345,7 @@ mod tests {
 
     #[test]
     fn test_op_equalverify_zero_false() {
-        let context = get_context(vec![vec![], vec![0x7f]]);
+        let context = get_context(vec![vec![], vec![ONE]]);
         let output = op_equalverify(context);
 
         let mut expected = get_context(vec![]);
@@ -374,6 +387,22 @@ mod tests {
     fn test_op_equalverify_panic() {
         let context = get_context(vec![]);
         op_equalverify(context);
+    }
+
+    #[test]
+    fn test_op_equal_true() {
+        let context = get_context(vec![vec![0x01], vec![0x01]]);
+        let output = op_equal(context);
+
+        assert_eq!(get_context(vec![vec![ONE]]), output);
+    }
+
+    #[test]
+    fn test_op_equal_false() {
+        let context = get_context(vec![vec![0x01], vec![0x02]]);
+        let output = op_equal(context);
+
+        assert_eq!(get_context(vec![vec![ZERO]]), output);
     }
 
     fn test_op_hash(op_hash: &Fn(Context) -> Context,
@@ -470,12 +499,12 @@ mod tests {
     #[test]
     fn test_op_verify_impl() {
         test_op_verify(vec![vec![ZERO]], false);
-        test_op_verify(vec![vec![0x7f]], true);
+        test_op_verify(vec![vec![ONE]], true);
         test_op_verify(vec![vec![]], false);
         test_op_verify(vec![], false);
         test_op_verify(vec![vec![ZERO, ZERO]], true);
         test_op_verify(vec![vec![ZERO, 0x81]], true);
-        test_op_verify(vec![vec![0x7f, 0x81]], true);
+        test_op_verify(vec![vec![ONE, 0x81]], true);
     }
 
     #[test]
