@@ -111,6 +111,26 @@ fn pick(context: Context, depth: usize) -> Context {
     new_context
 }
 
+pub fn op_toaltstack(context: Context) -> Context {
+    assert!(context.stack.len() > 0);
+
+    let mut new_context = context;
+    let el = new_context.stack.pop().unwrap();
+    new_context.altstack.push(el);
+
+    new_context
+}
+
+pub fn op_fromaltstack(context: Context) -> Context {
+    assert!(context.altstack.len() > 0);
+
+    let mut new_context = context;
+    let el = new_context.altstack.pop().unwrap();
+    new_context.stack.push(el);
+
+    new_context
+}
+
 pub fn op_over(context: Context) -> Context {
     pick(context, 1)
 }
@@ -351,7 +371,7 @@ impl<'a> cmp::PartialEq for Context<'a> {
 pub const OP_PUSHDATA : (&'static str, u8, bool, fn(Context) -> Context) =
     ("PUSHDATA",     0x01, false, op_pushdata);
 
-pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 47] = [
+pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 49] = [
     ("0",            0x00, false, op_false),
     // opcodes 0x02 - 0x4b op_pushdata
     ("1NEGATE",      0x4f, false, op_1negate),
@@ -381,7 +401,8 @@ pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 47] = [
     // TODO: opcodes 0x62 - 0x68
     ("VERIFY",       0x69, false, op_verify),
     ("RETURN",       0x6a, false, op_return),
-    // TODO: opcodes 0x6b - 0x6c
+    ("TOALTSTACK",   0x6b, false, op_toaltstack),
+    ("FROMALTSTACK", 0x6c, false, op_fromaltstack),
     ("2DROP",        0x6d, false, op_2drop),
     ("2DUP",         0x6e, false, op_2dup),
     ("3DUP",         0x6f, false, op_3dup),
@@ -779,5 +800,23 @@ mod tests {
     fn test_op_2swap() {
         test_stack_base(op_2swap, vec![vec![0x01], vec![0x02], vec![0x03], vec![0x04]],
                                   vec![vec![0x03], vec![0x04], vec![0x01], vec![0x02]]);
+    }
+
+    #[test]
+    fn test_op_fromaltstack() {
+        let mut context = get_context(vec![]);
+        context.altstack = vec![vec![0x01]];
+
+        assert_eq!(get_context(vec![vec![0x01]]), op_fromaltstack(context));
+    }
+
+    #[test]
+    fn test_op_toaltstack() {
+        let mut expected = get_context(vec![]);
+        expected.altstack = vec![vec![0x01]];
+
+        let context = get_context(vec![vec![0x01]]);
+
+        assert_eq!(expected, op_toaltstack(context));
     }
 }

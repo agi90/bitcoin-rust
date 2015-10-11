@@ -12,6 +12,7 @@ pub struct Context<'a> {
     data: Rc<ScriptElement<'a>>,
     stack: Vec<Vec<u8>>,
     valid: bool,
+    altstack: Vec<Vec<u8>>,
 }
 
 pub struct ScriptElement<'a> {
@@ -34,7 +35,8 @@ impl<'a> Context<'a> {
         Context {
             data: data,
             stack: stack,
-            valid: true
+            valid: true,
+            altstack: vec![],
         }
     }
 }
@@ -438,5 +440,9 @@ mod tests {
         test_parse_execute("1 2 3 4 5 6 2ROT 2 EQUALVERIFY 1 EQUALVERIFY 6 EQUALVERIFY 5 EQUALVERIFY 4 EQUALVERIFY 3 EQUAL", true);
 
         test_parse_execute("1 2 3 4 2SWAP 2 EQUALVERIFY 1 EQUALVERIFY 4 EQUALVERIFY 3 EQUAL", true);
+
+        test_parse_execute("4 TOALTSTACK 11 FROMALTSTACK 4 EQUALVERIFY 11 EQUAL", true);
+        test_parse_execute("1 TOALTSTACK FROMALTSTACK", true);
+        test_parse_execute("0 TOALTSTACK 1", true);
     }
 }
