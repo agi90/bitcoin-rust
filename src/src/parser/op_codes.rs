@@ -149,6 +149,10 @@ pub fn op_roll(context: Context) -> Context {
 pub fn op_rot(context: Context)  -> Context { roll(context, 2) }
 pub fn op_swap(context: Context) -> Context { roll(context, 1) }
 
+pub fn op_tuck(context: Context) -> Context {
+    pick(roll(context, 1), 1)
+}
+
 pub fn op_2drop(context: Context) -> Context {
     op_drop(op_drop(context))
 }
@@ -159,6 +163,18 @@ pub fn op_2dup(context: Context) -> Context {
 
 pub fn op_3dup(context: Context) -> Context {
     pick(pick(pick(context, 2), 2), 2)
+}
+
+pub fn op_2over(context: Context) -> Context {
+    pick(pick(context, 3), 3)
+}
+
+pub fn op_2rot(context: Context) -> Context {
+    roll(roll(context, 5), 5)
+}
+
+pub fn op_2swap(context: Context) -> Context {
+    roll(roll(context, 3), 3)
 }
 
 pub fn op_hash256(context: Context) -> Context {
@@ -335,7 +351,7 @@ impl<'a> cmp::PartialEq for Context<'a> {
 pub const OP_PUSHDATA : (&'static str, u8, bool, fn(Context) -> Context) =
     ("PUSHDATA",     0x01, false, op_pushdata);
 
-pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 43] = [
+pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 47] = [
     ("0",            0x00, false, op_false),
     // opcodes 0x02 - 0x4b op_pushdata
     ("1NEGATE",      0x4f, false, op_1negate),
@@ -369,7 +385,9 @@ pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 43] = [
     ("2DROP",        0x6d, false, op_2drop),
     ("2DUP",         0x6e, false, op_2dup),
     ("3DUP",         0x6f, false, op_3dup),
-    // TODO: opcodes 0x70 - 0x72
+    ("2OVER",        0x70, false, op_2over),
+    ("2ROT",         0x71, false, op_2rot),
+    ("2SWAP",        0x72, false, op_2swap),
     ("IFDUP",        0x73, false, op_ifdup),
     ("DEPTH",        0x74, false, op_depth),
     ("DROP",         0x75, false, op_drop),
@@ -380,6 +398,7 @@ pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 43] = [
     ("ROLL",         0x7a, false, op_roll),
     ("ROT",          0x7b, false, op_rot),
     ("SWAP",         0x7c, false, op_swap),
+    ("TUCK",         0x7d, false, op_tuck),
     // TODO: opcodes 0x7a - 0x87
     ("EQUAL",        0x87, false, op_equal),
     ("EQUALVERIFY",  0x88, false, op_equalverify),
@@ -717,6 +736,12 @@ mod tests {
     }
 
     #[test]
+    fn test_op_tuck() {
+        test_stack_base(op_tuck, vec![vec![0x01], vec![0x02]],
+                                 vec![vec![0x02], vec![0x01], vec![0x02]]);
+    }
+
+    #[test]
     fn test_op_2drop() {
         test_stack_base(op_2drop, vec![vec![0x01], vec![0x02], vec![0x03]],
                                   vec![vec![0x01]]);
@@ -736,5 +761,23 @@ mod tests {
     fn test_op_3dup() {
         test_stack_base(op_3dup, vec![vec![0x01], vec![0x02], vec![0x03]],
                                  vec![vec![0x01], vec![0x02], vec![0x03], vec![0x01], vec![0x02], vec![0x03]]);
+    }
+
+    #[test]
+    fn test_op_2over() {
+        test_stack_base(op_2over, vec![vec![0x01], vec![0x02], vec![0x03], vec![0x04]],
+                                  vec![vec![0x01], vec![0x02], vec![0x03], vec![0x04], vec![0x01], vec![0x02]]);
+    }
+
+    #[test]
+    fn test_op_2rot() {
+        test_stack_base(op_2rot, vec![vec![0x01], vec![0x02], vec![0x03], vec![0x04], vec![0x05], vec![0x06]],
+                                 vec![vec![0x03], vec![0x04], vec![0x05], vec![0x06], vec![0x01], vec![0x02]]);
+    }
+
+    #[test]
+    fn test_op_2swap() {
+        test_stack_base(op_2swap, vec![vec![0x01], vec![0x02], vec![0x03], vec![0x04]],
+                                  vec![vec![0x03], vec![0x04], vec![0x01], vec![0x02]]);
     }
 }
