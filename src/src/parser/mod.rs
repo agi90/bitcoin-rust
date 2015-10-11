@@ -444,5 +444,17 @@ mod tests {
         test_parse_execute("4 TOALTSTACK 11 FROMALTSTACK 4 EQUALVERIFY 11 EQUAL", true);
         test_parse_execute("1 TOALTSTACK FROMALTSTACK", true);
         test_parse_execute("0 TOALTSTACK 1", true);
+
+        test_parse_execute("0 SIZE", false);
+        test_parse_execute("1 SIZE", true);
+        test_parse_execute("0 SIZE 0 EQUAL", true);
+        test_parse_execute("0 SIZE EQUAL", true);
+        test_parse_execute("1 SIZE 1 EQUAL", true);
+        test_parse_execute("1 SIZE EQUAL", true);
+        test_parse_execute("2 SIZE 1 EQUAL", true);
+        test_parse_execute("12 SIZE 1 EQUALVERIFY 12 EQUAL", true);
+        test_parse_execute("0x05 0xaabbccddee SIZE 5 EQUAL", true);
+        test_parse_execute("0x06 0x6c6f6c777574 SIZE 6 EQUAL", true);
+        test_parse_execute("0x01 0x6c SIZE 1 EQUAL", true);
     }
 }

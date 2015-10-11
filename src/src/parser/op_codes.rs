@@ -342,6 +342,17 @@ pub fn op_return(context: Context) -> Context {
     return new_context;
 }
 
+pub fn op_size(context: Context) -> Context {
+    assert!(context.stack.len() > 0);
+
+    let mut new_context = context;
+    let size = get_number(new_context.stack.last().unwrap().len() as u8);
+
+    new_context.stack.push(vec![size]);
+
+    new_context
+}
+
 impl cmp::PartialEq for OpCode {
     fn eq(&self, other: &OpCode) -> bool {
         self.name == other.name && self.code == other.code
@@ -371,7 +382,7 @@ impl<'a> cmp::PartialEq for Context<'a> {
 pub const OP_PUSHDATA : (&'static str, u8, bool, fn(Context) -> Context) =
     ("PUSHDATA",     0x01, false, op_pushdata);
 
-pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 49] = [
+pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 50] = [
     ("0",            0x00, false, op_false),
     // opcodes 0x02 - 0x4b op_pushdata
     ("1NEGATE",      0x4f, false, op_1negate),
@@ -420,7 +431,9 @@ pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 49] = [
     ("ROT",          0x7b, false, op_rot),
     ("SWAP",         0x7c, false, op_swap),
     ("TUCK",         0x7d, false, op_tuck),
-    // TODO: opcodes 0x7a - 0x87
+    // TODO: opcodes 0x7e - 0x81 (disabled opcodes)
+    ("SIZE",         0x82, false, op_size),
+    // TODO: opcodes 0x83 - 0x87
     ("EQUAL",        0x87, false, op_equal),
     ("EQUALVERIFY",  0x88, false, op_equalverify),
     // TODO: opcodes 0x89 - 0xa8
@@ -818,5 +831,17 @@ mod tests {
         let context = get_context(vec![vec![0x01]]);
 
         assert_eq!(expected, op_toaltstack(context));
+    }
+
+    #[test]
+    fn test_op_size() {
+        test_stack_base(op_size, vec![vec![]],
+                                 vec![vec![], vec![ZERO]]);
+        test_stack_base(op_size, vec![vec![0x01, 0x02, 0x03, 0x04, 0x05]],
+                                 vec![vec![0x01, 0x02, 0x03, 0x04, 0x05], vec![ZERO - 5]]);
+        test_stack_base(op_size, vec![vec![0x01]],
+                                 vec![vec![0x01], vec![ONE]]);
+        test_stack_base(op_size, vec![vec![0x01, 0x02]],
+                                 vec![vec![0x01, 0x02], vec![ZERO - 2]]);
     }
 }
