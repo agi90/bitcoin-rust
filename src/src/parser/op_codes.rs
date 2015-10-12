@@ -2,6 +2,7 @@ extern crate rustc_serialize;
 
 use super::Context;
 use super::OpCode;
+use super::IntUtils;
 
 use crypto::sha2;
 use crypto::ripemd160;
@@ -9,8 +10,6 @@ use crypto::digest::Digest;
 
 use std::fmt;
 use std::cmp;
-
-const ZERO : u8 = 0x80;
 
 fn ripemd160(input : Vec<u8>) -> Vec<u8> {
     let mut ripemd160 = ripemd160::Ripemd160::new();
@@ -52,70 +51,12 @@ pub fn op_ifdup(context: Context) -> Context {
     context
 }
 
-pub fn to_vec_u8(x: i32) -> Vec<u8> {
-    let u = x.abs();
-    let sign: u8 = if u == x { 0x00 } else { 0x80 };
-
-    let byte0 = (u  & 0x000000ff)              as u8;
-    let byte1 = ((u & 0x0000ff00) / 0x100)     as u8;
-    let byte2 = ((u & 0x00ff0000) / 0x10000)   as u8;
-    let byte3 = ((u & 0x7f000000) / 0x1000000) as u8;
-
-    if u == 0 {
-        vec![]
-    } else if u <= 0x7f {
-        vec![u as u8 | sign]
-    } else if u <= 0x7fff {
-        vec![byte0, byte1 | sign]
-    } else if u <= 0x7fffff {
-        vec![byte0, byte1, byte2 | sign]
-    } else {
-        vec![byte0, byte1, byte2, byte3 | sign]
-    }
-}
-
-pub fn to_i32(x: &Vec<u8>) -> i32 {
-    assert!(x.len() <= 4);
-
-    let last = match x.last() {
-        Some(x) => *x,
-        None => 0
-    };
-
-    let mut sign = (last & 0x80) as i64;
-
-    let mut result: i64 = 0;
-    if x.len() >= 1 {
-        result += *x.first().unwrap() as i64;
-    }
-
-    if x.len() >= 2 {
-        result += *x.get(1).unwrap() as i64 * 0x100;
-        sign *= 0x100;
-    }
-
-    if x.len() >= 3 {
-        result += *x.get(2).unwrap() as i64 * 0x10000;
-        sign *= 0x100;
-    }
-
-    if x.len() == 4 {
-        result += *x.get(3).unwrap() as i64 * 0x1000000;
-        sign *= 0x100;
-    }
-
-    if sign != 0 {
-        result = (result - sign) * -1;
-    }
-
-    result as i32
-}
 
 pub fn op_depth(context: Context) -> Context {
     assert!(context.stack.len() <= 0x7f);
 
     let mut new_context = context;
-    let size = to_vec_u8(new_context.stack.len() as i32);
+    let size = IntUtils::to_vec_u8(new_context.stack.len() as i32);
     new_context.stack.push(size);
 
     new_context
@@ -178,7 +119,7 @@ pub fn op_pick(context: Context) -> Context {
 
     let mut new_context = context;
     let el = new_context.stack.pop().unwrap();
-    let size = to_i32(&el);
+    let size = IntUtils::to_i32(&el);
 
     pick(new_context, size as usize)
 }
@@ -199,7 +140,7 @@ pub fn op_roll(context: Context) -> Context {
     assert!(context.stack.len() > 0);
 
     let mut new_context = context;
-    let size = to_i32(&new_context.stack.pop().unwrap());
+    let size = IntUtils::to_i32(&new_context.stack.pop().unwrap());
     assert!(size <= 0xff);
     assert!(size >= 0x00);
 
@@ -238,6 +179,115 @@ pub fn op_2swap(context: Context) -> Context {
     roll(roll(context, 3), 3)
 }
 
+pub fn unary_op<F>(context: Context, op: F) -> Context
+where F: Fn(i32) -> i32 {
+    assert!(context.stack.len() > 0);
+
+    let mut new_context = context;
+    let input = IntUtils::to_i32(&new_context.stack.pop().unwrap());
+    new_context.stack.push(IntUtils::to_vec_u8(op(input)));
+
+    new_context
+}
+
+pub fn op_1add(context: Context)   -> Context { unary_op(context, |a| a + 1) }
+pub fn op_1sub(context: Context)   -> Context { unary_op(context, |a| a - 1) }
+pub fn op_negate(context: Context) -> Context { unary_op(context, |a| a * -1) }
+pub fn op_abs(context: Context)    -> Context { unary_op(context, |a| a.abs()) }
+pub fn op_not(context: Context) -> Context {
+    unary_op(context, |a| if a == 0 { 1 } else { 0 })
+}
+
+pub fn op_0notequal(context: Context) -> Context {
+    unary_op(context, |a| if a == 0 { 0 } else { 1 })
+}
+
+pub fn binary_op<F>(context: Context, op: F) -> Context
+where F: Fn(i32, i32) -> i32 {
+    assert!(context.stack.len() >= 2);
+
+    let mut new_context = context;
+    let input1 = IntUtils::to_i32(&new_context.stack.pop().unwrap());
+    let input2 = IntUtils::to_i32(&new_context.stack.pop().unwrap());
+    new_context.stack.push(IntUtils::to_vec_u8(op(input2, input1)));
+
+    new_context
+}
+
+pub fn bool_binary_op<F>(context: Context, op: F) -> Context
+where F: Fn(i32, i32) -> bool {
+    binary_op(context, |a, b| if op(a, b) { 1 } else { 0 })
+}
+
+pub fn op_add(context: Context) -> Context { binary_op(context, |a, b| a + b) }
+pub fn op_sub(context: Context) -> Context { binary_op(context, |a, b| a - b) }
+
+pub fn op_booland(context: Context) -> Context {
+    bool_binary_op(context, |a, b| a != 0 && b != 0)
+}
+
+pub fn op_boolor(context: Context) -> Context {
+    bool_binary_op(context, |a, b| a != 0 || b != 0)
+}
+
+pub fn op_numequal(context: Context) -> Context {
+    bool_binary_op(context, |a, b| a == b)
+}
+
+pub fn op_numequalverify(context: Context) -> Context {
+    op_verify(op_numequal(context))
+}
+
+pub fn op_numnotequal(context: Context) -> Context {
+    bool_binary_op(context, |a, b| a != b)
+}
+
+pub fn op_lessthan(context: Context) -> Context {
+    bool_binary_op(context, |a, b| a < b)
+}
+
+pub fn op_greaterthan(context: Context) -> Context {
+    bool_binary_op(context, |a, b| a > b)
+}
+
+pub fn op_lessthanorequal(context: Context) -> Context {
+    bool_binary_op(context, |a, b| a <= b)
+}
+
+pub fn op_greaterthanorequal(context: Context) -> Context {
+    bool_binary_op(context, |a, b| a >= b)
+}
+
+pub fn op_min(context: Context) -> Context {
+    binary_op(context, |a, b| cmp::min(a,b))
+}
+
+pub fn op_max(context: Context) -> Context {
+    binary_op(context, |a, b| cmp::max(a,b))
+}
+
+pub fn ternary_op<F>(context: Context, op: F) -> Context
+where F: Fn(i32, i32, i32) -> i32 {
+    assert!(context.stack.len() >= 3);
+
+    let mut new_context = context;
+    let input1 = IntUtils::to_i32(&new_context.stack.pop().unwrap());
+    let input2 = IntUtils::to_i32(&new_context.stack.pop().unwrap());
+    let input3 = IntUtils::to_i32(&new_context.stack.pop().unwrap());
+    new_context.stack.push(IntUtils::to_vec_u8(op(input3, input2, input1)));
+
+    new_context
+}
+
+pub fn bool_ternary_op<F>(context: Context, op: F) -> Context
+where F: Fn(i32, i32, i32) -> bool {
+    ternary_op(context, |a, b, c| if op(a, b, c) { 1 } else { 0 })
+}
+
+pub fn op_within(context: Context) -> Context {
+    bool_ternary_op(context, |x, min, max| x >= min && x < max)
+}
+
 pub fn op_hash256(context: Context) -> Context {
     let mut new_context = context;
     let last = new_context.stack.pop().unwrap();
@@ -267,6 +317,7 @@ pub fn op_equal(context: Context) -> Context {
     let x = new_context.stack.pop().unwrap();
     let y = new_context.stack.pop().unwrap();
 
+    print!("op_equal {:?} =?= {:?}\n", x, y);
     let result = if x.eq(&y) { vec![0x01] } else { vec![] };
     new_context.stack.push(result);
 
@@ -353,7 +404,7 @@ pub fn op_endif(context: Context) -> Context { context }
 
 pub fn is_true(element: &Option<&Vec<u8>>) -> bool {
     match element {
-        &Some(x) => to_i32(x) != 0,
+        &Some(x) => IntUtils::to_i32(x) != 0,
         &None => false,
     }
 }
@@ -379,7 +430,7 @@ pub fn op_size(context: Context) -> Context {
     assert!(context.stack.len() > 0);
 
     let mut new_context = context;
-    let size = to_vec_u8(new_context.stack.last().unwrap().len() as i32);
+    let size = IntUtils::to_vec_u8(new_context.stack.last().unwrap().len() as i32);
 
     new_context.stack.push(size);
 
@@ -415,64 +466,105 @@ impl<'a> cmp::PartialEq for Context<'a> {
 pub const OP_PUSHDATA : (&'static str, u8, bool, fn(Context) -> Context) =
     ("PUSHDATA",     0x01, false, op_pushdata);
 
-pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 50] = [
-    ("0",            0x00, false, op_false),
+pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 79] = [
+    ("0",                  0x00, false, op_false),
     // opcodes 0x02 - 0x4b op_pushdata
-    ("1NEGATE",      0x4f, false, op_1negate),
-    // TODO: opcodes 0x50
-    ("1",            0x51, false, op_1),
-    ("2",            0x52, false, op_2),
-    ("3",            0x53, false, op_3),
-    ("4",            0x54, false, op_4),
-    ("5",            0x55, false, op_5),
-    ("6",            0x56, false, op_6),
-    ("7",            0x57, false, op_7),
-    ("8",            0x58, false, op_8),
-    ("9",            0x59, false, op_9),
-    ("10",           0x5a, false, op_10),
-    ("11",           0x5b, false, op_11),
-    ("12",           0x5c, false, op_12),
-    ("13",           0x5d, false, op_13),
-    ("14",           0x5e, false, op_14),
-    ("15",           0x5f, false, op_15),
-    ("16",           0x60, false, op_16),
-    ("NOP",          0x61, false, op_nop),
-    ("IF",           0x63, true,  op_if),
-    ("NOTIF",        0x64, true,  op_notif),
-    ("ELSE",         0x67, false, op_else),
-    ("ENDIF",        0x68, false, op_endif),
-    ("NOP",          0x61, false, op_nop),
-    // TODO: opcodes 0x62 - 0x68
-    ("VERIFY",       0x69, false, op_verify),
-    ("RETURN",       0x6a, false, op_return),
-    ("TOALTSTACK",   0x6b, false, op_toaltstack),
-    ("FROMALTSTACK", 0x6c, false, op_fromaltstack),
-    ("2DROP",        0x6d, false, op_2drop),
-    ("2DUP",         0x6e, false, op_2dup),
-    ("3DUP",         0x6f, false, op_3dup),
-    ("2OVER",        0x70, false, op_2over),
-    ("2ROT",         0x71, false, op_2rot),
-    ("2SWAP",        0x72, false, op_2swap),
-    ("IFDUP",        0x73, false, op_ifdup),
-    ("DEPTH",        0x74, false, op_depth),
-    ("DROP",         0x75, false, op_drop),
-    ("DUP",          0x76, false, op_dup),
-    ("NIP",          0x77, false, op_nip),
-    ("OVER",         0x78, false, op_over),
-    ("PICK",         0x79, false, op_pick),
-    ("ROLL",         0x7a, false, op_roll),
-    ("ROT",          0x7b, false, op_rot),
-    ("SWAP",         0x7c, false, op_swap),
-    ("TUCK",         0x7d, false, op_tuck),
-    // TODO: opcodes 0x7e - 0x81 (disabled opcodes)
-    ("SIZE",         0x82, false, op_size),
-    // TODO: opcodes 0x83 - 0x87
-    ("EQUAL",        0x87, false, op_equal),
-    ("EQUALVERIFY",  0x88, false, op_equalverify),
-    // TODO: opcodes 0x89 - 0xa8
-    ("HASH160",      0xa9, false, op_hash160),
-    ("HASH256",      0xaa, false, op_hash256),
-    // TODO: opcodes 0xab - 0xff
+    ("1NEGATE",            0x4f, false, op_1negate),
+    // TODO: opcode 0x50 (reserved opcode)
+    ("1",                  0x51, false, op_1),
+    ("2",                  0x52, false, op_2),
+    ("3",                  0x53, false, op_3),
+    ("4",                  0x54, false, op_4),
+    ("5",                  0x55, false, op_5),
+    ("6",                  0x56, false, op_6),
+    ("7",                  0x57, false, op_7),
+    ("8",                  0x58, false, op_8),
+    ("9",                  0x59, false, op_9),
+    ("10",                 0x5a, false, op_10),
+    ("11",                 0x5b, false, op_11),
+    ("12",                 0x5c, false, op_12),
+    ("13",                 0x5d, false, op_13),
+    ("14",                 0x5e, false, op_14),
+    ("15",                 0x5f, false, op_15),
+    ("16",                 0x60, false, op_16),
+    ("NOP",                0x61, false, op_nop),
+    // TODO: opcode 0x62 (reserved opcode)
+    ("IF",                 0x63, true,  op_if),
+    ("NOTIF",              0x64, true,  op_notif),
+    // TODO: opcodes 0x65 - 0x66 (reserved opcodes)
+    ("ELSE",               0x67, false, op_else),
+    ("ENDIF",              0x68, false, op_endif),
+    ("VERIFY",             0x69, false, op_verify),
+    ("RETURN",             0x6a, false, op_return),
+    ("TOALTSTACK",         0x6b, false, op_toaltstack),
+    ("FROMALTSTACK",       0x6c, false, op_fromaltstack),
+    ("2DROP",              0x6d, false, op_2drop),
+    ("2DUP",               0x6e, false, op_2dup),
+    ("3DUP",               0x6f, false, op_3dup),
+    ("2OVER",              0x70, false, op_2over),
+    ("2ROT",               0x71, false, op_2rot),
+    ("2SWAP",              0x72, false, op_2swap),
+    ("IFDUP",              0x73, false, op_ifdup),
+    ("DEPTH",              0x74, false, op_depth),
+    ("DROP",               0x75, false, op_drop),
+    ("DUP",                0x76, false, op_dup),
+    ("NIP",                0x77, false, op_nip),
+    ("OVER",               0x78, false, op_over),
+    ("PICK",               0x79, false, op_pick),
+    ("ROLL",               0x7a, false, op_roll),
+    ("ROT",                0x7b, false, op_rot),
+    ("SWAP",               0x7c, false, op_swap),
+    ("TUCK",               0x7d, false, op_tuck),
+    // opcodes 0x7e - 0x81 (disabled opcodes)
+    ("SIZE",               0x82, false, op_size),
+    // opcodes 0x83 - 0x86 (disabled opcodes)
+    ("EQUAL",              0x87, false, op_equal),
+    ("EQUALVERIFY",        0x88, false, op_equalverify),
+    // TODO: opcodes 0x89 - 0x8a (reserved opcodes)
+    ("1ADD",               0x8b, false, op_1add),
+    ("1SUB",               0x8c, false, op_1sub),
+    // opcodes 0x8d - 0x8e (disabled opcodes)
+    ("NEGATE",             0x8f, false, op_negate),
+    ("ABS",                0x90, false, op_abs),
+    ("NOT",                0x91, false, op_not),
+    ("0NOTEQUAL",          0x92, false, op_0notequal),
+    ("ADD",                0x93, false, op_add),
+    ("SUB",                0x94, false, op_sub),
+    // opcodes 0x95 - 0x99 (disabled opcodes)
+    ("BOOLAND",            0x9a, false, op_booland),
+    ("BOOLOR",             0x9b, false, op_boolor),
+    ("NUMEQUAL",           0x9c, false, op_numequal),
+    ("NUMEQUALVERIFY",     0x9d, false, op_numequalverify),
+    ("NUMNOTEQUAL",        0x9e, false, op_numnotequal),
+    ("LESSTHAN",           0x9f, false, op_lessthan),
+    ("GREATERTHAN",        0xa0, false, op_greaterthan),
+    ("LESSTHANOREQUAL",    0xa1, false, op_lessthanorequal),
+    ("GREATERTHANOREQUAL", 0xa2, false, op_greaterthanorequal),
+    ("MIN",                0xa3, false, op_min),
+    ("MAX",                0xa4, false, op_max),
+    ("WITHIN",             0xa5, false, op_within),
+    // TODO: opcodes 0xa6 - 0xa9
+    // ("RIPEMD160",             0xa6, false, op_ripemd160),
+    // ("SHA1",                  0xa7, false, op_sha1),
+    // ("SHA256",                0xa8, false, op_sha256),
+    ("HASH160",            0xa9, false, op_hash160),
+    ("HASH256",            0xaa, false, op_hash256),
+    // TODO: opcodes 0xab - 0xaf
+    // ("CODESEPARATOR",         0xab, false, op_codeseparator),
+    // ("CHECKSIG",              0xac, false, op_checksig),
+    // ("CHECKSIGVERIFY",        0xad, false, op_codeseparator),
+    // ("CHECKMULTISIG",         0xae, false, op_checkmultisig),
+    // ("CHECKMULTISIGVERIFY",   0xaf, false, op_checkmultisigverify),
+    ("NOP1",               0xb0, false, op_nop),
+    ("NOP2",               0xb1, false, op_nop),
+    ("NOP3",               0xb2, false, op_nop),
+    ("NOP4",               0xb3, false, op_nop),
+    ("NOP5",               0xb4, false, op_nop),
+    ("NOP6",               0xb5, false, op_nop),
+    ("NOP7",               0xb6, false, op_nop),
+    ("NOP8",               0xb7, false, op_nop),
+    ("NOP9",               0xb8, false, op_nop),
+    ("NOP10",              0xb9, false, op_nop),
 ];
 
 pub const OP_IF: u8 = 0x63;
@@ -485,7 +577,6 @@ mod tests {
     use super::*;
     use super::ripemd160;
     use super::sha256;
-    use super::ZERO;
 
     use super::super::Context;
     use super::super::ScriptElement;
@@ -493,6 +584,8 @@ mod tests {
 
     use std::rc::Rc;
     use rustc_serialize::base64::FromBase64;
+
+    const ZERO : u8 = 0x80;
 
     static TEST_OP_CODE: OpCode = OpCode {
         name: "TEST",
@@ -865,59 +958,5 @@ mod tests {
                                  vec![vec![0x01], vec![0x01]]);
         test_stack_base(op_size, vec![vec![0x01, 0x02]],
                                  vec![vec![0x01, 0x02], vec![0x02]]);
-    }
-
-    #[test]
-    fn test_to_i32() {
-        assert_eq!(to_i32(&vec![0x01]), 1);
-        assert_eq!(to_i32(&vec![0x81]), -1);
-
-        assert_eq!(to_i32(&vec![0x7f]), 127);
-        assert_eq!(to_i32(&vec![0xff]), -127);
-
-        assert_eq!(to_i32(&vec![0x80, 0x00]), 128);
-        assert_eq!(to_i32(&vec![0x80, 0x80]), -128);
-
-        assert_eq!(to_i32(&vec![0xff, 0x7f]), 32767);
-        assert_eq!(to_i32(&vec![0xff, 0xff]), -32767);
-
-        assert_eq!(to_i32(&vec![0x00, 0x80, 0x00]), 32768);
-        assert_eq!(to_i32(&vec![0x00, 0x80, 0x80]), -32768);
-
-        assert_eq!(to_i32(&vec![0xff, 0xff, 0x7f]), 8388607);
-        assert_eq!(to_i32(&vec![0xff, 0xff, 0xff]), -8388607);
-
-        assert_eq!(to_i32(&vec![0x00, 0x00, 0x80, 0x00]), 8388608);
-        assert_eq!(to_i32(&vec![0x00, 0x00, 0x80, 0x80]), -8388608);
-
-        assert_eq!(to_i32(&vec![0xff, 0xff, 0xff, 0x7f]), 2147483647);
-        assert_eq!(to_i32(&vec![0xff, 0xff, 0xff, 0xff]), -2147483647);
-    }
-
-    #[test]
-    fn test_to_vec_u8() {
-        assert_eq!(vec![0x01], to_vec_u8(1));
-        assert_eq!(vec![0x81], to_vec_u8(-1));
-
-        assert_eq!(vec![0x7f], to_vec_u8(127));
-        assert_eq!(vec![0xff], to_vec_u8(-127));
-
-        assert_eq!(vec![0x80, 0x00], to_vec_u8(128));
-        assert_eq!(vec![0x80, 0x80], to_vec_u8(-128));
-
-        assert_eq!(vec![0xff, 0x7f], to_vec_u8(32767));
-        assert_eq!(vec![0xff, 0xff], to_vec_u8(-32767));
-
-        assert_eq!(vec![0x00, 0x80, 0x00], to_vec_u8(32768));
-        assert_eq!(vec![0x00, 0x80, 0x80], to_vec_u8(-32768));
-
-        assert_eq!(vec![0xff, 0xff, 0x7f], to_vec_u8(8388607));
-        assert_eq!(vec![0xff, 0xff, 0xff], to_vec_u8(-8388607));
-
-        assert_eq!(vec![0x00, 0x00, 0x80, 0x00], to_vec_u8(8388608));
-        assert_eq!(vec![0x00, 0x00, 0x80, 0x80], to_vec_u8(-8388608));
-
-        assert_eq!(vec![0xff, 0xff, 0xff, 0x7f], to_vec_u8(2147483647));
-        assert_eq!(vec![0xff, 0xff, 0xff, 0xff], to_vec_u8(-2147483647));
     }
 }

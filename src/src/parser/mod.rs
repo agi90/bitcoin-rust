@@ -291,7 +291,20 @@ impl HumanReadableParser {
             return self.parse_string_literal(&result);
         }
 
+        let number = Regex::new(r"[0-9]+").unwrap();
+        if number.is_match(token) {
+            return self.parse_number(token);
+        }
+
         Err(format!("Token not recognized `{}`\n", token))
+    }
+
+    fn parse_number(&self, token: &str) -> Result<Vec<u8>, String> {
+        let result = token.parse::<i32>().unwrap();
+        let mut result_array = IntUtils::to_vec_u8(result);
+        let len = result_array.len();
+        result_array.insert(0, len as u8);
+        return Ok(result_array);
     }
 
     fn parse_string_literal(&self, token: &str) -> Result<Vec<u8>, String> {
@@ -331,6 +344,69 @@ impl HumanReadableParser {
         }
 
         Ok(result)
+    }
+}
+
+pub struct IntUtils;
+
+impl IntUtils {
+    pub fn to_vec_u8(x: i32) -> Vec<u8> {
+        let u = x.abs();
+        let sign: u8 = if u == x { 0x00 } else { 0x80 };
+
+        let byte0 = (u  & 0x000000ff)              as u8;
+        let byte1 = ((u & 0x0000ff00) / 0x100)     as u8;
+        let byte2 = ((u & 0x00ff0000) / 0x10000)   as u8;
+        let byte3 = ((u & 0x7f000000) / 0x1000000) as u8;
+
+        if u == 0 {
+            vec![]
+        } else if u <= 0x7f {
+            vec![u as u8 | sign]
+        } else if u <= 0x7fff {
+            vec![byte0, byte1 | sign]
+        } else if u <= 0x7fffff {
+            vec![byte0, byte1, byte2 | sign]
+        } else {
+            vec![byte0, byte1, byte2, byte3 | sign]
+        }
+    }
+
+    pub fn to_i32(x: &Vec<u8>) -> i32 {
+        assert!(x.len() <= 4);
+
+        let last = match x.last() {
+            Some(x) => *x,
+            None => 0
+        };
+
+        let mut sign = (last & 0x80) as i64;
+
+        let mut result: i64 = 0;
+        if x.len() >= 1 {
+            result += *x.first().unwrap() as i64;
+        }
+
+        if x.len() >= 2 {
+            result += *x.get(1).unwrap() as i64 * 0x100;
+            sign *= 0x100;
+        }
+
+        if x.len() >= 3 {
+            result += *x.get(2).unwrap() as i64 * 0x10000;
+            sign *= 0x100;
+        }
+
+        if x.len() == 4 {
+            result += *x.get(3).unwrap() as i64 * 0x1000000;
+            sign *= 0x100;
+        }
+
+        if sign != 0 {
+            result = (result - sign) * -1;
+        }
+
+        result as i32
     }
 }
 
@@ -380,7 +456,9 @@ mod tests {
         test_parse_execute("1 1 EQUAL", true);
         test_parse_execute("1 2 EQUAL", false);
         test_parse_execute("1 0x02 0x0100 EQUAL", false);
+        test_parse_execute("1 0x02 0x0100 NUMEQUAL", true);
         test_parse_execute("0 0x01 0x80 EQUAL", false);
+        test_parse_execute("0 0x01 0x80 NUMEQUAL", true);
 
         test_parse_execute("0 1 1 EQUALVERIFY", false);
         test_parse_execute("1 1 1 EQUALVERIFY", true);
@@ -480,5 +558,133 @@ mod tests {
         test_parse_execute("'a' SIZE 1 EQUAL", true);
         test_parse_execute("'abcdefghil' SIZE 10 EQUALVERIFY 0x0a 0x6162636465666768696c EQUAL", true);
         test_parse_execute("'漢字' SIZE 6 EQUAL", true);
+
+        test_parse_execute("0 1ADD 1 EQUAL", true);
+        test_parse_execute("1 1ADD 2 EQUAL", true);
+
+        test_parse_execute("1 1SUB 0 EQUAL", true);
+        test_parse_execute("2 1SUB 1 EQUAL", true);
+
+        test_parse_execute("444 1SUB 443 EQUAL", true);
+
+        // copied from https://github.com/bitcoin/bitcoin/blob/master/src/test/data/script_valid.json
+        test_parse_execute("0 0 EQUAL", true);
+        test_parse_execute("1 1 ADD 2 EQUAL", true);
+        test_parse_execute("1 1ADD 2 EQUAL", true);
+        test_parse_execute("111 1SUB 110 EQUAL", true);
+        test_parse_execute("111 1 ADD 12 SUB 100 EQUAL", true);
+        test_parse_execute("0 ABS 0 EQUAL", true);
+        test_parse_execute("16 ABS 16 EQUAL", true);
+        test_parse_execute("-16 ABS -16 NEGATE EQUAL", true);
+        test_parse_execute("0 NOT NOP", true);
+        test_parse_execute("1 NOT 0 EQUAL", true);
+        test_parse_execute("11 NOT 0 EQUAL", true);
+        test_parse_execute("0 0NOTEQUAL 0 EQUAL", true);
+        test_parse_execute("1 0NOTEQUAL 1 EQUAL", true);
+        test_parse_execute("111 0NOTEQUAL 1 EQUAL", true);
+        test_parse_execute("-111 0NOTEQUAL 1 EQUAL", true);
+        test_parse_execute("1 1 BOOLAND NOP", true);
+        test_parse_execute("1 0 BOOLAND NOT", true);
+        test_parse_execute("0 1 BOOLAND NOT", true);
+        test_parse_execute("0 0 BOOLAND NOT", true);
+        test_parse_execute("16 17 BOOLAND NOP", true);
+        test_parse_execute("1 1 BOOLOR NOP", true);
+        test_parse_execute("1 0 BOOLOR NOP", true);
+        test_parse_execute("0 1 BOOLOR NOP", true);
+        test_parse_execute("0 0 BOOLOR NOT", true);
+        test_parse_execute("16 17 BOOLOR NOP", true);
+        test_parse_execute("11 10 1 ADD NUMEQUAL", true);
+        test_parse_execute("11 10 1 ADD NUMEQUALVERIFY 1", true);
+        test_parse_execute("11 10 1 ADD NUMNOTEQUAL NOT", true);
+        test_parse_execute("111 10 1 ADD NUMNOTEQUAL", true);
+        test_parse_execute("11 10 LESSTHAN NOT", true);
+        test_parse_execute("4 4 LESSTHAN NOT", true);
+        test_parse_execute("10 11 LESSTHAN", true);
+        test_parse_execute("-11 11 LESSTHAN", true);
+        test_parse_execute("-11 -10 LESSTHAN", true);
+        test_parse_execute("11 10 GREATERTHAN", true);
+        test_parse_execute("4 4 GREATERTHAN NOT", true);
+        test_parse_execute("10 11 GREATERTHAN NOT", true);
+        test_parse_execute("-11 11 GREATERTHAN NOT", true);
+        test_parse_execute("-11 -10 GREATERTHAN NOT", true);
+        test_parse_execute("11 10 LESSTHANOREQUAL NOT", true);
+        test_parse_execute("4 4 LESSTHANOREQUAL", true);
+        test_parse_execute("10 11 LESSTHANOREQUAL", true);
+        test_parse_execute("-11 11 LESSTHANOREQUAL", true);
+        test_parse_execute("-11 -10 LESSTHANOREQUAL", true);
+        test_parse_execute("11 10 GREATERTHANOREQUAL", true);
+        test_parse_execute("4 4 GREATERTHANOREQUAL", true);
+        test_parse_execute("10 11 GREATERTHANOREQUAL NOT", true);
+        test_parse_execute("-11 11 GREATERTHANOREQUAL NOT", true);
+        test_parse_execute("-11 -10 GREATERTHANOREQUAL NOT", true);
+        test_parse_execute("1 0 MIN 0 NUMEQUAL", true);
+        test_parse_execute("0 1 MIN 0 NUMEQUAL", true);
+        test_parse_execute("-1 0 MIN -1 NUMEQUAL", true);
+        test_parse_execute("0 -2147483647 MIN -2147483647 NUMEQUAL", true);
+        test_parse_execute("2147483647 0 MAX 2147483647 NUMEQUAL", true);
+        test_parse_execute("0 100 MAX 100 NUMEQUAL", true);
+        test_parse_execute("-100 0 MAX 0 NUMEQUAL", true);
+        test_parse_execute("0 -2147483647 MAX 0 NUMEQUAL", true);
+        test_parse_execute("0 0 1 WITHIN", true);
+        test_parse_execute("1 0 1 WITHIN NOT", true);
+        test_parse_execute("0 -2147483647 2147483647 WITHIN", true);
+        test_parse_execute("-1 -100 100 WITHIN", true);
+        test_parse_execute("11 -100 100 WITHIN", true);
+        test_parse_execute("-2147483647 -100 100 WITHIN NOT", true);
+        test_parse_execute("2147483647 -100 100 WITHIN NOT", true);
+    }
+
+    #[test]
+    fn test_to_i32() {
+        assert_eq!(IntUtils::to_i32(&vec![0x01]), 1);
+        assert_eq!(IntUtils::to_i32(&vec![0x81]), -1);
+
+        assert_eq!(IntUtils::to_i32(&vec![0x7f]), 127);
+        assert_eq!(IntUtils::to_i32(&vec![0xff]), -127);
+
+        assert_eq!(IntUtils::to_i32(&vec![0x80, 0x00]), 128);
+        assert_eq!(IntUtils::to_i32(&vec![0x80, 0x80]), -128);
+
+        assert_eq!(IntUtils::to_i32(&vec![0xff, 0x7f]), 32767);
+        assert_eq!(IntUtils::to_i32(&vec![0xff, 0xff]), -32767);
+
+        assert_eq!(IntUtils::to_i32(&vec![0x00, 0x80, 0x00]), 32768);
+        assert_eq!(IntUtils::to_i32(&vec![0x00, 0x80, 0x80]), -32768);
+
+        assert_eq!(IntUtils::to_i32(&vec![0xff, 0xff, 0x7f]), 8388607);
+        assert_eq!(IntUtils::to_i32(&vec![0xff, 0xff, 0xff]), -8388607);
+
+        assert_eq!(IntUtils::to_i32(&vec![0x00, 0x00, 0x80, 0x00]), 8388608);
+        assert_eq!(IntUtils::to_i32(&vec![0x00, 0x00, 0x80, 0x80]), -8388608);
+
+        assert_eq!(IntUtils::to_i32(&vec![0xff, 0xff, 0xff, 0x7f]), 2147483647);
+        assert_eq!(IntUtils::to_i32(&vec![0xff, 0xff, 0xff, 0xff]), -2147483647);
+    }
+
+    #[test]
+    fn test_to_vec_u8() {
+        assert_eq!(vec![0x01], IntUtils::to_vec_u8(1));
+        assert_eq!(vec![0x81], IntUtils::to_vec_u8(-1));
+
+        assert_eq!(vec![0x7f], IntUtils::to_vec_u8(127));
+        assert_eq!(vec![0xff], IntUtils::to_vec_u8(-127));
+
+        assert_eq!(vec![0x80, 0x00], IntUtils::to_vec_u8(128));
+        assert_eq!(vec![0x80, 0x80], IntUtils::to_vec_u8(-128));
+
+        assert_eq!(vec![0xff, 0x7f], IntUtils::to_vec_u8(32767));
+        assert_eq!(vec![0xff, 0xff], IntUtils::to_vec_u8(-32767));
+
+        assert_eq!(vec![0x00, 0x80, 0x00], IntUtils::to_vec_u8(32768));
+        assert_eq!(vec![0x00, 0x80, 0x80], IntUtils::to_vec_u8(-32768));
+
+        assert_eq!(vec![0xff, 0xff, 0x7f], IntUtils::to_vec_u8(8388607));
+        assert_eq!(vec![0xff, 0xff, 0xff], IntUtils::to_vec_u8(-8388607));
+
+        assert_eq!(vec![0x00, 0x00, 0x80, 0x00], IntUtils::to_vec_u8(8388608));
+        assert_eq!(vec![0x00, 0x00, 0x80, 0x80], IntUtils::to_vec_u8(-8388608));
+
+        assert_eq!(vec![0xff, 0xff, 0xff, 0x7f], IntUtils::to_vec_u8(2147483647));
+        assert_eq!(vec![0xff, 0xff, 0xff, 0xff], IntUtils::to_vec_u8(-2147483647));
     }
 }
