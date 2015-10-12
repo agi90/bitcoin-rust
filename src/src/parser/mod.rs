@@ -379,6 +379,8 @@ mod tests {
         test_parse_execute("1 0 EQUAL", false);
         test_parse_execute("1 1 EQUAL", true);
         test_parse_execute("1 2 EQUAL", false);
+        test_parse_execute("1 0x02 0x0100 EQUAL", false);
+        test_parse_execute("0 0x01 0x80 EQUAL", false);
 
         test_parse_execute("0 1 1 EQUALVERIFY", false);
         test_parse_execute("1 1 1 EQUALVERIFY", true);

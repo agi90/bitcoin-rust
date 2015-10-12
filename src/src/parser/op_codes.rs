@@ -11,7 +11,6 @@ use std::fmt;
 use std::cmp;
 
 const ZERO : u8 = 0x80;
-const ONE : u8 = 0x7f;
 
 fn ripemd160(input : Vec<u8>) -> Vec<u8> {
     let mut ripemd160 = ripemd160::Ripemd160::new();
@@ -53,32 +52,71 @@ pub fn op_ifdup(context: Context) -> Context {
     context
 }
 
-/*
- * Numbers in bitcoin are stored as little-endian integers
- * while we use unsigned integers. This function
- * converts from unsigned to little-endian integers when needed.
- */
-fn get_number(x: u8) -> u8 {
-    assert!(x <= ZERO);
+pub fn to_vec_u8(x: i32) -> Vec<u8> {
+    let u = x.abs();
+    let sign: u8 = if u == x { 0x00 } else { 0x80 };
 
-    ZERO - x
+    let byte0 = (u  & 0x000000ff)              as u8;
+    let byte1 = ((u & 0x0000ff00) / 0x100)     as u8;
+    let byte2 = ((u & 0x00ff0000) / 0x10000)   as u8;
+    let byte3 = ((u & 0x7f000000) / 0x1000000) as u8;
+
+    if u == 0 {
+        vec![]
+    } else if u <= 0x7f {
+        vec![u as u8 | sign]
+    } else if u <= 0x7fff {
+        vec![byte0, byte1 | sign]
+    } else if u <= 0x7fffff {
+        vec![byte0, byte1, byte2 | sign]
+    } else {
+        vec![byte0, byte1, byte2, byte3 | sign]
+    }
 }
 
-fn get_number_arr(x: Vec<u8>) -> u8 {
-    assert!(x.len() <= 1);
+pub fn to_i32(x: &Vec<u8>) -> i32 {
+    assert!(x.len() <= 4);
 
-    match x.last() {
-        Some(x) => get_number(*x),
-        None => 0x00,
+    let last = match x.last() {
+        Some(x) => *x,
+        None => 0
+    };
+
+    let mut sign = (last & 0x80) as i64;
+
+    let mut result: i64 = 0;
+    if x.len() >= 1 {
+        result += *x.first().unwrap() as i64;
     }
+
+    if x.len() >= 2 {
+        result += *x.get(1).unwrap() as i64 * 0x100;
+        sign *= 0x100;
+    }
+
+    if x.len() >= 3 {
+        result += *x.get(2).unwrap() as i64 * 0x10000;
+        sign *= 0x100;
+    }
+
+    if x.len() == 4 {
+        result += *x.get(3).unwrap() as i64 * 0x1000000;
+        sign *= 0x100;
+    }
+
+    if sign != 0 {
+        result = (result - sign) * -1;
+    }
+
+    result as i32
 }
 
 pub fn op_depth(context: Context) -> Context {
     assert!(context.stack.len() <= 0x7f);
 
     let mut new_context = context;
-    let size = get_number(new_context.stack.len() as u8);
-    new_context.stack.push(vec![size]);
+    let size = to_vec_u8(new_context.stack.len() as i32);
+    new_context.stack.push(size);
 
     new_context
 }
@@ -140,7 +178,7 @@ pub fn op_pick(context: Context) -> Context {
 
     let mut new_context = context;
     let el = new_context.stack.pop().unwrap();
-    let size = get_number_arr(el);
+    let size = to_i32(&el);
 
     pick(new_context, size as usize)
 }
@@ -161,9 +199,12 @@ pub fn op_roll(context: Context) -> Context {
     assert!(context.stack.len() > 0);
 
     let mut new_context = context;
-    let size = get_number_arr(new_context.stack.pop().unwrap());
+    let size = to_i32(&new_context.stack.pop().unwrap());
+    assert!(size <= 0xff);
+    assert!(size >= 0x00);
 
-    roll(new_context, size)
+
+    roll(new_context, size as u8)
 }
 
 pub fn op_rot(context: Context)  -> Context { roll(context, 2) }
@@ -219,14 +260,6 @@ pub fn op_equalverify(context: Context) -> Context {
     op_verify(op_equal(context))
 }
 
-fn is_equal(x: Vec<u8>, y: Vec<u8>) -> bool {
-    if !is_true(&Some(&x)) && !is_true(&Some(&y)) {
-        true
-    } else {
-        x.eq(&y)
-    }
-}
-
 pub fn op_equal(context: Context) -> Context {
     assert!(context.stack.len() >= 2);
 
@@ -234,8 +267,8 @@ pub fn op_equal(context: Context) -> Context {
     let x = new_context.stack.pop().unwrap();
     let y = new_context.stack.pop().unwrap();
 
-    let result = if is_equal(x, y) { ONE } else { ZERO };
-    new_context.stack.push(vec![result]);
+    let result = if x.eq(&y) { vec![0x01] } else { vec![] };
+    new_context.stack.push(result);
 
     new_context
 }
@@ -266,22 +299,22 @@ pub fn op_1negate(context: Context) -> Context {
     push_to_stack(context, 0x81)
 }
 
-pub fn  op_1(context: Context) -> Context { push_to_stack(context, get_number(0x01)) }
-pub fn  op_2(context: Context) -> Context { push_to_stack(context, get_number(0x02)) }
-pub fn  op_3(context: Context) -> Context { push_to_stack(context, get_number(0x03)) }
-pub fn  op_4(context: Context) -> Context { push_to_stack(context, get_number(0x04)) }
-pub fn  op_5(context: Context) -> Context { push_to_stack(context, get_number(0x05)) }
-pub fn  op_6(context: Context) -> Context { push_to_stack(context, get_number(0x06)) }
-pub fn  op_7(context: Context) -> Context { push_to_stack(context, get_number(0x07)) }
-pub fn  op_8(context: Context) -> Context { push_to_stack(context, get_number(0x08)) }
-pub fn  op_9(context: Context) -> Context { push_to_stack(context, get_number(0x09)) }
-pub fn op_10(context: Context) -> Context { push_to_stack(context, get_number(0x0a)) }
-pub fn op_11(context: Context) -> Context { push_to_stack(context, get_number(0x0b)) }
-pub fn op_12(context: Context) -> Context { push_to_stack(context, get_number(0x0c)) }
-pub fn op_13(context: Context) -> Context { push_to_stack(context, get_number(0x0d)) }
-pub fn op_14(context: Context) -> Context { push_to_stack(context, get_number(0x0e)) }
-pub fn op_15(context: Context) -> Context { push_to_stack(context, get_number(0x0f)) }
-pub fn op_16(context: Context) -> Context { push_to_stack(context, get_number(0x10)) }
+pub fn  op_1(context: Context) -> Context { push_to_stack(context, 0x01) }
+pub fn  op_2(context: Context) -> Context { push_to_stack(context, 0x02) }
+pub fn  op_3(context: Context) -> Context { push_to_stack(context, 0x03) }
+pub fn  op_4(context: Context) -> Context { push_to_stack(context, 0x04) }
+pub fn  op_5(context: Context) -> Context { push_to_stack(context, 0x05) }
+pub fn  op_6(context: Context) -> Context { push_to_stack(context, 0x06) }
+pub fn  op_7(context: Context) -> Context { push_to_stack(context, 0x07) }
+pub fn  op_8(context: Context) -> Context { push_to_stack(context, 0x08) }
+pub fn  op_9(context: Context) -> Context { push_to_stack(context, 0x09) }
+pub fn op_10(context: Context) -> Context { push_to_stack(context, 0x0a) }
+pub fn op_11(context: Context) -> Context { push_to_stack(context, 0x0b) }
+pub fn op_12(context: Context) -> Context { push_to_stack(context, 0x0c) }
+pub fn op_13(context: Context) -> Context { push_to_stack(context, 0x0d) }
+pub fn op_14(context: Context) -> Context { push_to_stack(context, 0x0e) }
+pub fn op_15(context: Context) -> Context { push_to_stack(context, 0x0f) }
+pub fn op_16(context: Context) -> Context { push_to_stack(context, 0x10) }
 
 pub fn op_nop(context: Context) -> Context { context }
 
@@ -320,7 +353,7 @@ pub fn op_endif(context: Context) -> Context { context }
 
 pub fn is_true(element: &Option<&Vec<u8>>) -> bool {
     match element {
-        &Some(x) => x.len() > 1 || (x.len() != 0 && x[0] != ZERO),
+        &Some(x) => to_i32(x) != 0,
         &None => false,
     }
 }
@@ -346,9 +379,9 @@ pub fn op_size(context: Context) -> Context {
     assert!(context.stack.len() > 0);
 
     let mut new_context = context;
-    let size = get_number(new_context.stack.last().unwrap().len() as u8);
+    let size = to_vec_u8(new_context.stack.last().unwrap().len() as i32);
 
-    new_context.stack.push(vec![size]);
+    new_context.stack.push(size);
 
     new_context
 }
@@ -453,7 +486,6 @@ mod tests {
     use super::ripemd160;
     use super::sha256;
     use super::ZERO;
-    use super::ONE;
 
     use super::super::Context;
     use super::super::ScriptElement;
@@ -512,9 +544,8 @@ mod tests {
 
     #[test]
     fn test_op_equalverify_zero_false() {
-        let context = get_context(vec![vec![], vec![ONE]]);
+        let context = get_context(vec![vec![], vec![ZERO]]);
         let output = op_equalverify(context);
-
         let mut expected = get_context(vec![]);
         expected.valid = false;
 
@@ -522,17 +553,8 @@ mod tests {
     }
 
     #[test]
-    fn test_op_equalverify_zero_true() {
-        let context = get_context(vec![vec![], vec![ZERO]]);
-        let output = op_equalverify(context);
-
-        assert_eq!(get_context(vec![]), output);
-    }
-
-
-    #[test]
     fn test_op_equalverify_true() {
-        let context = get_context(vec![vec![0x01], vec![0x1]]);
+        let context = get_context(vec![vec![0x01], vec![0x01]]);
         let output = op_equalverify(context);
 
         assert_eq!(get_context(vec![]), output);
@@ -540,7 +562,7 @@ mod tests {
 
     #[test]
     fn test_op_equalverify_false() {
-        let context = get_context(vec![vec![0x01], vec![0x2]]);
+        let context = get_context(vec![vec![0x01], vec![0x02]]);
         let output = op_equalverify(context);
 
         let mut expected = get_context(vec![]);
@@ -561,7 +583,7 @@ mod tests {
         let context = get_context(vec![vec![0x01], vec![0x01]]);
         let output = op_equal(context);
 
-        assert_eq!(get_context(vec![vec![ONE]]), output);
+        assert_eq!(get_context(vec![vec![0x01]]), output);
     }
 
     #[test]
@@ -569,7 +591,7 @@ mod tests {
         let context = get_context(vec![vec![0x01], vec![0x02]]);
         let output = op_equal(context);
 
-        assert_eq!(get_context(vec![vec![ZERO]]), output);
+        assert_eq!(get_context(vec![vec![]]), output);
     }
 
     fn test_op_hash(op_hash: &Fn(Context) -> Context,
@@ -638,22 +660,22 @@ mod tests {
 
     #[test]
     fn test_op_n() {
-        test_push_to_stack(0x7f, op_1);
-        test_push_to_stack(0x7e, op_2);
-        test_push_to_stack(0x7d, op_3);
-        test_push_to_stack(0x7c, op_4);
-        test_push_to_stack(0x7b, op_5);
-        test_push_to_stack(0x7a, op_6);
-        test_push_to_stack(0x79, op_7);
-        test_push_to_stack(0x78, op_8);
-        test_push_to_stack(0x77, op_9);
-        test_push_to_stack(0x76, op_10);
-        test_push_to_stack(0x75, op_11);
-        test_push_to_stack(0x74, op_12);
-        test_push_to_stack(0x73, op_13);
-        test_push_to_stack(0x72, op_14);
-        test_push_to_stack(0x71, op_15);
-        test_push_to_stack(0x70, op_16);
+        test_push_to_stack(0x01, op_1);
+        test_push_to_stack(0x02, op_2);
+        test_push_to_stack(0x03, op_3);
+        test_push_to_stack(0x04, op_4);
+        test_push_to_stack(0x05, op_5);
+        test_push_to_stack(0x06, op_6);
+        test_push_to_stack(0x07, op_7);
+        test_push_to_stack(0x08, op_8);
+        test_push_to_stack(0x09, op_9);
+        test_push_to_stack(0x0a, op_10);
+        test_push_to_stack(0x0b, op_11);
+        test_push_to_stack(0x0c, op_12);
+        test_push_to_stack(0x0d, op_13);
+        test_push_to_stack(0x0e, op_14);
+        test_push_to_stack(0x0f, op_15);
+        test_push_to_stack(0x10, op_16);
     }
 
     fn test_op_verify(data: Vec<Vec<u8>>, valid: bool) {
@@ -666,12 +688,12 @@ mod tests {
     #[test]
     fn test_op_verify_impl() {
         test_op_verify(vec![vec![ZERO]], false);
-        test_op_verify(vec![vec![ONE]], true);
+        test_op_verify(vec![vec![0x01]], true);
         test_op_verify(vec![vec![]], false);
         test_op_verify(vec![], false);
         test_op_verify(vec![vec![ZERO, ZERO]], true);
         test_op_verify(vec![vec![ZERO, 0x81]], true);
-        test_op_verify(vec![vec![ONE, 0x81]], true);
+        test_op_verify(vec![vec![0x01, 0x81]], true);
     }
 
     #[test]
@@ -712,46 +734,46 @@ mod tests {
 
     #[test]
     fn test_op_depth() {
-        test_stack_base(op_depth, vec![], vec![vec![ZERO]]);
-        test_stack_base(op_depth, vec![vec![0x01]], vec![vec![0x01], vec![0x7f]]);
+        test_stack_base(op_depth, vec![], vec![vec![]]);
+        test_stack_base(op_depth, vec![vec![0x01]], vec![vec![0x01], vec![0x01]]);
         test_stack_base(op_depth, vec![vec![0x01], vec![0x02]],
-                        vec![vec![0x01], vec![0x02], vec![0x7e]]);
+                        vec![vec![0x01], vec![0x02], vec![0x02]]);
         test_stack_base(op_depth, vec![vec![0x01], vec![0x02], vec![0x03]],
-                        vec![vec![0x01], vec![0x02], vec![0x03], vec![0x7d]]);
+                        vec![vec![0x01], vec![0x02], vec![0x03], vec![0x03]]);
     }
 
     #[test]
     fn test_op_drop() {
         test_stack_base(op_drop, vec![], vec![]);
-        test_stack_base(op_drop, vec![vec![ONE]], vec![]);
-        test_stack_base(op_drop, vec![vec![ONE], vec![ONE]], vec![vec![ONE]]);
+        test_stack_base(op_drop, vec![vec![0x01]], vec![]);
+        test_stack_base(op_drop, vec![vec![0x01], vec![0x01]], vec![vec![0x01]]);
     }
 
     #[test]
     fn test_op_nip() {
-        test_stack_base(op_nip, vec![vec![ONE]], vec![vec![ONE]]);
-        test_stack_base(op_nip, vec![vec![0x02], vec![ONE]], vec![vec![ONE]]);
-        test_stack_base(op_nip, vec![vec![0x03], vec![0x02], vec![ONE]], vec![vec![0x03], vec![ONE]]);
+        test_stack_base(op_nip, vec![vec![0x01]], vec![vec![0x01]]);
+        test_stack_base(op_nip, vec![vec![0x02], vec![0x01]], vec![vec![0x01]]);
+        test_stack_base(op_nip, vec![vec![0x03], vec![0x02], vec![0x01]], vec![vec![0x03], vec![0x01]]);
     }
 
     #[test]
     fn test_op_over() {
-        test_stack_base(op_over, vec![vec![0x02], vec![ONE]], vec![vec![0x02], vec![ONE], vec![0x02]]);
+        test_stack_base(op_over, vec![vec![0x02], vec![0x01]], vec![vec![0x02], vec![0x01], vec![0x02]]);
     }
 
     #[test]
     fn test_op_pick() {
-        test_stack_base(op_pick, vec![vec![0x03], vec![0x02], vec![ONE]], vec![vec![0x03], vec![0x02], vec![0x03]]);
-        test_stack_base(op_pick, vec![vec![0x04], vec![0x03], vec![0x02], vec![0x7e]],
+        test_stack_base(op_pick, vec![vec![0x03], vec![0x02], vec![0x01]], vec![vec![0x03], vec![0x02], vec![0x03]]);
+        test_stack_base(op_pick, vec![vec![0x04], vec![0x03], vec![0x02], vec![0x02]],
                                  vec![vec![0x04], vec![0x03], vec![0x02], vec![0x04]]);
     }
 
     #[test]
     fn test_op_roll() {
-        test_stack_base(op_roll, vec![vec![0x03], vec![0x02], vec![ONE]], vec![vec![0x02], vec![0x03]]);
-        test_stack_base(op_roll, vec![vec![0x04], vec![0x03], vec![0x02], vec![0x7e]],
+        test_stack_base(op_roll, vec![vec![0x03], vec![0x02], vec![0x01]], vec![vec![0x02], vec![0x03]]);
+        test_stack_base(op_roll, vec![vec![0x04], vec![0x03], vec![0x02], vec![0x02]],
                                  vec![vec![0x03], vec![0x02], vec![0x04]]);
-        test_stack_base(op_roll, vec![vec![0x04], vec![0x03], vec![0x02], vec![ONE]],
+        test_stack_base(op_roll, vec![vec![0x04], vec![0x03], vec![0x02], vec![0x01]],
                                  vec![vec![0x04], vec![0x02], vec![0x03]]);
         test_stack_base(op_roll, vec![vec![0x04], vec![0x03], vec![0x02], vec![]],
                                  vec![vec![0x04], vec![0x03], vec![0x02]]);
@@ -836,12 +858,66 @@ mod tests {
     #[test]
     fn test_op_size() {
         test_stack_base(op_size, vec![vec![]],
-                                 vec![vec![], vec![ZERO]]);
+                                 vec![vec![], vec![]]);
         test_stack_base(op_size, vec![vec![0x01, 0x02, 0x03, 0x04, 0x05]],
-                                 vec![vec![0x01, 0x02, 0x03, 0x04, 0x05], vec![ZERO - 5]]);
+                                 vec![vec![0x01, 0x02, 0x03, 0x04, 0x05], vec![0x05]]);
         test_stack_base(op_size, vec![vec![0x01]],
-                                 vec![vec![0x01], vec![ONE]]);
+                                 vec![vec![0x01], vec![0x01]]);
         test_stack_base(op_size, vec![vec![0x01, 0x02]],
-                                 vec![vec![0x01, 0x02], vec![ZERO - 2]]);
+                                 vec![vec![0x01, 0x02], vec![0x02]]);
+    }
+
+    #[test]
+    fn test_to_i32() {
+        assert_eq!(to_i32(&vec![0x01]), 1);
+        assert_eq!(to_i32(&vec![0x81]), -1);
+
+        assert_eq!(to_i32(&vec![0x7f]), 127);
+        assert_eq!(to_i32(&vec![0xff]), -127);
+
+        assert_eq!(to_i32(&vec![0x80, 0x00]), 128);
+        assert_eq!(to_i32(&vec![0x80, 0x80]), -128);
+
+        assert_eq!(to_i32(&vec![0xff, 0x7f]), 32767);
+        assert_eq!(to_i32(&vec![0xff, 0xff]), -32767);
+
+        assert_eq!(to_i32(&vec![0x00, 0x80, 0x00]), 32768);
+        assert_eq!(to_i32(&vec![0x00, 0x80, 0x80]), -32768);
+
+        assert_eq!(to_i32(&vec![0xff, 0xff, 0x7f]), 8388607);
+        assert_eq!(to_i32(&vec![0xff, 0xff, 0xff]), -8388607);
+
+        assert_eq!(to_i32(&vec![0x00, 0x00, 0x80, 0x00]), 8388608);
+        assert_eq!(to_i32(&vec![0x00, 0x00, 0x80, 0x80]), -8388608);
+
+        assert_eq!(to_i32(&vec![0xff, 0xff, 0xff, 0x7f]), 2147483647);
+        assert_eq!(to_i32(&vec![0xff, 0xff, 0xff, 0xff]), -2147483647);
+    }
+
+    #[test]
+    fn test_to_vec_u8() {
+        assert_eq!(vec![0x01], to_vec_u8(1));
+        assert_eq!(vec![0x81], to_vec_u8(-1));
+
+        assert_eq!(vec![0x7f], to_vec_u8(127));
+        assert_eq!(vec![0xff], to_vec_u8(-127));
+
+        assert_eq!(vec![0x80, 0x00], to_vec_u8(128));
+        assert_eq!(vec![0x80, 0x80], to_vec_u8(-128));
+
+        assert_eq!(vec![0xff, 0x7f], to_vec_u8(32767));
+        assert_eq!(vec![0xff, 0xff], to_vec_u8(-32767));
+
+        assert_eq!(vec![0x00, 0x80, 0x00], to_vec_u8(32768));
+        assert_eq!(vec![0x00, 0x80, 0x80], to_vec_u8(-32768));
+
+        assert_eq!(vec![0xff, 0xff, 0x7f], to_vec_u8(8388607));
+        assert_eq!(vec![0xff, 0xff, 0xff], to_vec_u8(-8388607));
+
+        assert_eq!(vec![0x00, 0x00, 0x80, 0x00], to_vec_u8(8388608));
+        assert_eq!(vec![0x00, 0x00, 0x80, 0x80], to_vec_u8(-8388608));
+
+        assert_eq!(vec![0xff, 0xff, 0xff, 0x7f], to_vec_u8(2147483647));
+        assert_eq!(vec![0xff, 0xff, 0xff, 0xff], to_vec_u8(-2147483647));
     }
 }
