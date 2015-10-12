@@ -279,22 +279,39 @@ impl HumanReadableParser {
         }
     }
 
-    fn parse_hex(&self, token: &str) -> Result<Vec<u8>, String> {
-        let re = Regex::new(r"0x(?P<h>[0-9a-fA-F]+)").unwrap();
-        let hex = re.replace_all(token, "$h").from_hex();
-
-        match hex {
-            Ok(x) => Ok(x),
-            Err(_) => {
-                Err(format!("Token not recognized `{}`\n", token))
-            },
+    fn parse_non_op_code(&self, token: &str) -> Result<Vec<u8>, String> {
+        let hex = Regex::new(r"0x(?P<h>[0-9a-fA-F]+)").unwrap();
+        if hex.is_match(token) {
+            return Ok(hex.replace_all(token, "$h").from_hex().unwrap());
         }
+
+        let string = Regex::new(r"'(?P<s>[^']*)'").unwrap();
+        if string.is_match(token) {
+            let result = string.replace_all(token, "$s");
+            return self.parse_string_literal(&result);
+        }
+
+        Err(format!("Token not recognized `{}`\n", token))
+    }
+
+    fn parse_string_literal(&self, token: &str) -> Result<Vec<u8>, String> {
+        if token.len() > 75 {
+            return Err(format!(
+                    "The literal `{}` is too long, the maximum length allowed is 75.",
+                    token));
+        }
+
+        let mut result_array = Vec::new();
+
+        result_array.push(token.len() as u8);
+        result_array.extend(token.as_bytes().iter().cloned());
+        return Ok(result_array);
     }
 
     fn get_op_codes(&self, token: &str) -> Result<Vec<u8>, String> {
         match self.op_codes_map.get(&token.to_string()) {
             Some(x) => Ok(vec![*x]),
-            None => self.parse_hex(token),
+            None => self.parse_non_op_code(token),
         }
     }
 
@@ -456,5 +473,10 @@ mod tests {
         test_parse_execute("0x05 0xaabbccddee SIZE 5 EQUAL", true);
         test_parse_execute("0x06 0x6c6f6c777574 SIZE 6 EQUAL", true);
         test_parse_execute("0x01 0x6c SIZE 1 EQUAL", true);
+
+        test_parse_execute("'' SIZE 0 EQUAL", true);
+        test_parse_execute("'a' SIZE 1 EQUAL", true);
+        test_parse_execute("'abcdefghil' SIZE 10 EQUALVERIFY 0x0a 0x6162636465666768696c EQUAL", true);
+        test_parse_execute("'漢字' SIZE 6 EQUAL", true);
     }
 }
