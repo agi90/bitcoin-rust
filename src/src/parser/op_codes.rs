@@ -51,43 +51,45 @@ pub fn op_ifdup(context: Context) -> Context {
     context
 }
 
-
-pub fn op_depth(context: Context) -> Context {
-    assert!(context.stack.len() <= 0x7f);
-
+fn stack_op<F>(context: Context, op: F) -> Context
+where F: Fn(&mut Vec<Vec<u8>>)
+{
     let mut new_context = context;
-    let size = IntUtils::to_vec_u8(new_context.stack.len() as i32);
-    new_context.stack.push(size);
+    op(&mut new_context.stack);
 
     new_context
 }
 
-pub fn op_drop(context: Context) -> Context {
-    let mut new_context = context;
-    new_context.stack.pop();
+pub fn op_depth(context: Context) -> Context {
+    assert!(context.stack.len() <= 0x7f);
 
-    new_context
+    stack_op(context, |st| {
+        let size = IntUtils::to_vec_u8(st.len() as i32);
+        st.push(size);
+    })
+}
+
+pub fn op_drop(context: Context) -> Context {
+    stack_op(context, |st| { st.pop(); })
 }
 
 pub fn op_nip(context: Context) -> Context {
     assert!(context.stack.len() >= 1);
 
-    let mut new_context = context;
-    let el = new_context.stack.pop().unwrap();
-    new_context.stack.pop();
-    new_context.stack.push(el);
-
-    new_context
+    stack_op(context, |st| {
+        let el = st.pop().unwrap();
+        st.pop();
+        st.push(el);
+    })
 }
 
 fn pick(context: Context, depth: usize) -> Context {
     assert!(context.stack.len() >= depth + 1);
 
-    let mut new_context = context;
-    let el = new_context.stack.get(new_context.stack.len() - depth - 1).unwrap().clone();
-    new_context.stack.push(el);
-
-    new_context
+    stack_op(context, |st| {
+        let el = st.get(st.len() - depth - 1).unwrap().clone();
+        st.push(el);
+    })
 }
 
 pub fn op_toaltstack(context: Context) -> Context {
@@ -127,13 +129,11 @@ pub fn op_pick(context: Context) -> Context {
 fn roll(context: Context, size: u8) -> Context {
     assert!(size == 0x00 || context.stack.len() > size as usize - 1);
 
-    let mut new_context = context;
-
-    let pos = new_context.stack.len() - 1 - size as usize;
-    let el = new_context.stack.remove(pos);
-    new_context.stack.push(el);
-
-    new_context
+    stack_op(context, |st| {
+        let pos = st.len() - 1 - size as usize;
+        let el = st.remove(pos);
+        st.push(el);
+    })
 }
 
 pub fn op_roll(context: Context) -> Context {
@@ -143,7 +143,6 @@ pub fn op_roll(context: Context) -> Context {
     let size = IntUtils::to_i32(&new_context.stack.pop().unwrap());
     assert!(size <= 0xff);
     assert!(size >= 0x00);
-
 
     roll(new_context, size as u8)
 }
@@ -183,11 +182,10 @@ pub fn unary_op<F>(context: Context, op: F) -> Context
 where F: Fn(i32) -> i32 {
     assert!(context.stack.len() > 0);
 
-    let mut new_context = context;
-    let input = IntUtils::to_i32(&new_context.stack.pop().unwrap());
-    new_context.stack.push(IntUtils::to_vec_u8(op(input)));
-
-    new_context
+    stack_op(context, |st| {
+        let input = IntUtils::to_i32(&st.pop().unwrap());
+        st.push(IntUtils::to_vec_u8(op(input)));
+    })
 }
 
 pub fn op_1add(context: Context)   -> Context { unary_op(context, |a| a + 1) }
@@ -206,12 +204,11 @@ pub fn binary_op<F>(context: Context, op: F) -> Context
 where F: Fn(i32, i32) -> i32 {
     assert!(context.stack.len() >= 2);
 
-    let mut new_context = context;
-    let input1 = IntUtils::to_i32(&new_context.stack.pop().unwrap());
-    let input2 = IntUtils::to_i32(&new_context.stack.pop().unwrap());
-    new_context.stack.push(IntUtils::to_vec_u8(op(input2, input1)));
-
-    new_context
+    stack_op(context, |st| {
+        let input1 = IntUtils::to_i32(&st.pop().unwrap());
+        let input2 = IntUtils::to_i32(&st.pop().unwrap());
+        st.push(IntUtils::to_vec_u8(op(input2, input1)));
+    })
 }
 
 pub fn bool_binary_op<F>(context: Context, op: F) -> Context
@@ -270,13 +267,12 @@ pub fn ternary_op<F>(context: Context, op: F) -> Context
 where F: Fn(i32, i32, i32) -> i32 {
     assert!(context.stack.len() >= 3);
 
-    let mut new_context = context;
-    let input1 = IntUtils::to_i32(&new_context.stack.pop().unwrap());
-    let input2 = IntUtils::to_i32(&new_context.stack.pop().unwrap());
-    let input3 = IntUtils::to_i32(&new_context.stack.pop().unwrap());
-    new_context.stack.push(IntUtils::to_vec_u8(op(input3, input2, input1)));
-
-    new_context
+    stack_op(context, |st| {
+        let input1 = IntUtils::to_i32(&st.pop().unwrap());
+        let input2 = IntUtils::to_i32(&st.pop().unwrap());
+        let input3 = IntUtils::to_i32(&st.pop().unwrap());
+        st.push(IntUtils::to_vec_u8(op(input3, input2, input1)));
+    })
 }
 
 pub fn bool_ternary_op<F>(context: Context, op: F) -> Context
@@ -289,21 +285,17 @@ pub fn op_within(context: Context) -> Context {
 }
 
 pub fn op_hash256(context: Context) -> Context {
-    let mut new_context = context;
-    let last = new_context.stack.pop().unwrap();
-
-    new_context.stack.push(sha256(sha256(last)));
-
-    new_context
+    stack_op(context, |st| {
+        let last = st.pop().unwrap();
+        st.push(sha256(sha256(last)));
+    })
 }
 
 pub fn op_hash160(context: Context) -> Context {
-    let mut new_context = context;
-    let last = new_context.stack.pop().unwrap();
-
-    new_context.stack.push(ripemd160(sha256(last)));
-
-    new_context
+    stack_op(context, |st| {
+        let last = st.pop().unwrap();
+        st.push(ripemd160(sha256(last)));
+    })
 }
 
 pub fn op_equalverify(context: Context) -> Context {
@@ -313,22 +305,17 @@ pub fn op_equalverify(context: Context) -> Context {
 pub fn op_equal(context: Context) -> Context {
     assert!(context.stack.len() >= 2);
 
-    let mut new_context = context;
-    let x = new_context.stack.pop().unwrap();
-    let y = new_context.stack.pop().unwrap();
+    stack_op(context, |st| {
+        let x = st.pop().unwrap();
+        let y = st.pop().unwrap();
 
-    print!("op_equal {:?} =?= {:?}\n", x, y);
-    let result = if x.eq(&y) { vec![0x01] } else { vec![] };
-    new_context.stack.push(result);
-
-    new_context
+        let result = if x.eq(&y) { vec![0x01] } else { vec![] };
+        st.push(result);
+    })
 }
 
 pub fn op_false(context: Context) -> Context {
-    let mut new_context = context;
-    new_context.stack.push(vec![]);
-
-    new_context
+    stack_op(context, |st| st.push(vec![]))
 }
 
 pub fn op_pushdata(context: Context) -> Context {
@@ -339,10 +326,7 @@ pub fn op_pushdata(context: Context) -> Context {
 }
 
 fn push_to_stack(context: Context, data: u8) -> Context {
-    let mut new_context = context;
-    new_context.stack.push(vec![data]);
-
-    new_context
+    stack_op(context, |st| st.push(vec![data]))
 }
 
 pub fn op_1negate(context: Context) -> Context {
@@ -429,12 +413,10 @@ pub fn op_return(context: Context) -> Context {
 pub fn op_size(context: Context) -> Context {
     assert!(context.stack.len() > 0);
 
-    let mut new_context = context;
-    let size = IntUtils::to_vec_u8(new_context.stack.last().unwrap().len() as i32);
-
-    new_context.stack.push(size);
-
-    new_context
+    stack_op(context, |st| {
+        let size = IntUtils::to_vec_u8(st.last().unwrap().len() as i32);
+        st.push(size);
+    })
 }
 
 impl cmp::PartialEq for OpCode {
