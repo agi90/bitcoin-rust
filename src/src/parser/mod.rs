@@ -428,7 +428,7 @@ mod tests {
     }
 
     fn test_parse_execute(script: &str, expected: bool) {
-        print!("\n\n");
+        print!("\n\n {}\n", script);
         let parser = Parser::new();
 
         let data = parser.parse_human_readable(script);
@@ -632,6 +632,21 @@ mod tests {
         test_parse_execute("11 -100 100 WITHIN", true);
         test_parse_execute("-2147483647 -100 100 WITHIN NOT", true);
         test_parse_execute("2147483647 -100 100 WITHIN NOT", true);
+        test_parse_execute("'' RIPEMD160 0x14 0x9c1185a5c5e9fc54612808977ee8f548b2258d31 EQUAL", true);
+        test_parse_execute("'a' RIPEMD160 0x14 0x0bdc9d2d256b3ee9daae347be6f4dc835a467ffe EQUAL", true);
+        test_parse_execute("'abcdefghijklmnopqrstuvwxyz' RIPEMD160 0x14 0xf71c27109c692c1b56bbdceb5b9d2865b3708dbc EQUAL", true);
+        test_parse_execute("'' SHA1 0x14 0xda39a3ee5e6b4b0d3255bfef95601890afd80709 EQUAL", true);
+        test_parse_execute("'a' SHA1 0x14 0x86f7e437faa5a7fce15d1ddcb9eaeaea377667b8 EQUAL", true);
+        test_parse_execute("'abcdefghijklmnopqrstuvwxyz' SHA1 0x14 0x32d10c7b8cf96570ca04ce37f2a19d84240d3a89 EQUAL", true);
+        test_parse_execute("'' SHA256 0x20 0xe3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 EQUAL", true);
+        test_parse_execute("'a' SHA256 0x20 0xca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb EQUAL", true);
+        test_parse_execute("'abcdefghijklmnopqrstuvwxyz' SHA256 0x20 0x71c480df93d6ae2f1efad1447c66c9525e316218cf51fc8d9ed832f2daf18b73 EQUAL", true);
+        test_parse_execute("'' DUP HASH160 SWAP SHA256 RIPEMD160 EQUAL", true);
+        test_parse_execute("'' DUP HASH256 SWAP SHA256 SHA256 EQUAL", true);
+        test_parse_execute("'' NOP HASH160 0x14 0xb472a266d0bd89c13706a4132ccfb16f7c3b9fcb EQUAL", true);
+        test_parse_execute("'a' HASH160 NOP 0x14 0x994355199e516ff76c4fa4aab39337b9d84cf12b EQUAL", true);
+        test_parse_execute("'' HASH256 0x20 0x5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456 EQUAL", true);
+        test_parse_execute("'a' HASH256 0x20 0xbf5d3affb73efd2ec6c36ad3112dd933efed63c4e1cbffcfa88e2759c144f2d8 EQUAL", true);
     }
 
     #[test]

@@ -4,6 +4,7 @@ use super::Context;
 use super::OpCode;
 use super::IntUtils;
 
+use crypto::sha1;
 use crypto::sha2;
 use crypto::ripemd160;
 use crypto::digest::Digest;
@@ -11,7 +12,7 @@ use crypto::digest::Digest;
 use std::fmt;
 use std::cmp;
 
-fn ripemd160(input : Vec<u8>) -> Vec<u8> {
+fn ripemd160(input: Vec<u8>) -> Vec<u8> {
     let mut ripemd160 = ripemd160::Ripemd160::new();
     ripemd160.input(&input[..]);
 
@@ -24,7 +25,20 @@ fn ripemd160(input : Vec<u8>) -> Vec<u8> {
     result_array
 }
 
-fn sha256(input : Vec<u8>) -> Vec<u8> {
+fn sha1(input: Vec<u8>) -> Vec<u8> {
+    let mut sha1 = sha1::Sha1::new();
+    sha1.input(&input[..]);
+
+    let mut result = [0u8;20];
+    sha1.result(&mut result[0..20]);
+
+    let mut result_array = Vec::new();
+    result_array.extend(result.iter().cloned());
+
+    result_array
+}
+
+fn sha256(input: Vec<u8>) -> Vec<u8> {
     let mut sha256 = sha2::Sha256::new();
     sha256.input(&input[..]);
 
@@ -284,10 +298,31 @@ pub fn op_within(context: Context) -> Context {
     bool_ternary_op(context, |x, min, max| x >= min && x < max)
 }
 
+pub fn op_sha256(context: Context) -> Context {
+    stack_op(context, |st| {
+        let last = st.pop().unwrap();
+        st.push(sha256(last));
+    })
+}
+
+pub fn op_sha1(context: Context) -> Context {
+    stack_op(context, |st| {
+        let last = st.pop().unwrap();
+        st.push(sha1(last));
+    })
+}
+
 pub fn op_hash256(context: Context) -> Context {
     stack_op(context, |st| {
         let last = st.pop().unwrap();
         st.push(sha256(sha256(last)));
+    })
+}
+
+pub fn op_ripemd160(context: Context) -> Context {
+    stack_op(context, |st| {
+        let last = st.pop().unwrap();
+        st.push(ripemd160(last));
     })
 }
 
@@ -448,7 +483,7 @@ impl<'a> cmp::PartialEq for Context<'a> {
 pub const OP_PUSHDATA : (&'static str, u8, bool, fn(Context) -> Context) =
     ("PUSHDATA",     0x01, false, op_pushdata);
 
-pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 79] = [
+pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 82] = [
     ("0",                  0x00, false, op_false),
     // opcodes 0x02 - 0x4b op_pushdata
     ("1NEGATE",            0x4f, false, op_1negate),
@@ -525,10 +560,9 @@ pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 79] = [
     ("MIN",                0xa3, false, op_min),
     ("MAX",                0xa4, false, op_max),
     ("WITHIN",             0xa5, false, op_within),
-    // TODO: opcodes 0xa6 - 0xa9
-    // ("RIPEMD160",             0xa6, false, op_ripemd160),
-    // ("SHA1",                  0xa7, false, op_sha1),
-    // ("SHA256",                0xa8, false, op_sha256),
+    ("RIPEMD160",          0xa6, false, op_ripemd160),
+    ("SHA1",               0xa7, false, op_sha1),
+    ("SHA256",             0xa8, false, op_sha256),
     ("HASH160",            0xa9, false, op_hash160),
     ("HASH256",            0xaa, false, op_hash256),
     // TODO: opcodes 0xab - 0xaf
