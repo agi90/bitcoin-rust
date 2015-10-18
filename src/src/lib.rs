@@ -1,4 +1,4 @@
-pub mod parser;
+pub mod script;
 
 extern crate crypto;
 extern crate regex;
