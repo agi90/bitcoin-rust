@@ -2,7 +2,8 @@ extern crate rustc_serialize;
 
 use super::Context;
 use super::OpCode;
-use super::IntUtils;
+
+use utils::IntUtils;
 
 use crypto::sha1;
 use crypto::sha2;
