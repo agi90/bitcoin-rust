@@ -114,64 +114,115 @@ impl Parser {
         }
     }
 
-    pub fn parse(&self, script_: Vec<u8>) -> Result<Rc<ScriptElement>, String> {
+    fn get_data(&self, script: &mut Vec<u8>, bytes: i32) -> Result<Vec<u8>, String> {
+        let mut data = Vec::new();
+
+        for _ in 0..bytes {
+            let el = script.pop();
+            match el {
+                Some(x) => data.push(x),
+                None => return Err(format!("Unexpected end of data")),
+            };
+        }
+
+        Ok(data)
+    }
+
+    fn get_data_bytes(&self, script: &mut Vec<u8>, bytes: u8) -> Result<Vec<u8>, String> {
+        assert!(bytes <= 4);
+        assert!(script.len() >= bytes as usize);
+
+        let mut vec_u8_number: Vec<u8> = vec![];
+        for _ in 0..bytes {
+            vec_u8_number.push(script.pop().unwrap());
+        }
+
+        // TODO: Reasearch this better. It's unclear to me
+        // whether PUSHDATA{1,2,4} have a u32 or a i32 as argument.
+        // It feels wrong to have a u32 given that everything else
+        // is a i32, but there are tests in the official client that
+        // use 0xFF as argument for PUSHDATA1 which clearly is not a i32.
+        let number = IntUtils::to_u32(&vec_u8_number);
+
+        self.get_data(script, number as i32)
+    }
+
+    fn to_script_elements(&self, script_: Vec<u8>) -> Result<Vec<Box<ScriptElement>>, String> {
+        let mut script = script_;
+        let mut script_elements: Vec<Box<ScriptElement>> = vec![];
+        let mut id = 0;
+
+        script.reverse();
+        while script.len() > 0 {
+            let op_code = script.pop().unwrap();
+            let element: ScriptElement;
+
+            match op_code {
+                0x01 ... 0x4b => {
+                    let data = self.get_data(&mut script, op_code as i32);
+                    element = ScriptElement::new(&self.op_pushdata, data.unwrap(), id);
+                },
+                // PUSHDATA{1,2,4}
+                0x4c ... 0x4e => {
+                    let bytes = match op_code {
+                        0x4c => 1,
+                        0x4d => 2,
+                        0x4e => 4,
+                        _ => unreachable!(),
+                    };
+
+                    let data = self.get_data_bytes(&mut script, bytes);
+                    element = ScriptElement::new(&self.op_pushdata, data.unwrap(), id);
+                },
+                _ => match self.op_codes.get(&op_code) {
+                    Some(x) => {
+                        element = ScriptElement::new(x, vec![], id);
+                    },
+                    None => {
+                        return Err(format!("Unrecognized op code `0x{:x}`\n", op_code));
+                    },
+                },
+            };
+
+            id += 1;
+            script_elements.push(Box::new(element));
+        }
+
+        Ok(script_elements)
+    }
+
+    fn compile_ifs<'a>(&'a self, script_: Vec<Box<ScriptElement<'a>>>)
+    -> Result<Vec<(Box<ScriptElement>, u32)>, String> {
         let mut script = script_;
         script.reverse();
 
         let mut script_elements: Vec<(Box<ScriptElement>, u32)> = vec![];
         let mut level = 0;
-        let mut id = 0;
 
         while script.len() > 0 {
-            let op_code = script.pop().unwrap();
-            let element: ScriptElement;
+            let element = script.pop().unwrap();
+            let code = element.op_code.code;
 
-            match self.op_codes.get(&op_code) {
-                Some(x) => {
-                    element = ScriptElement::new(x, vec![], id);
-                    id += 1;
-                },
-                None => {
-                    // This opcode will push `op_code` bytes to the stack
-                    assert!(op_code < 0x4c);
-                    let mut data = Vec::new();
-
-                    for _ in 0..op_code {
-                        let el = script.pop();
-                        match el {
-                            Some(x) => data.push(x),
-                            None => return Err(format!("Unexpected end of data")),
-                        };
-                    }
-
-                    element = ScriptElement::new(&self.op_pushdata, data, id);
-                    id += 1;
-                },
+            match code {
+                op_codes::OP_ENDIF |
+                op_codes::OP_ELSE |
+                op_codes::OP_NOTIF => { level -= 1 },
+                _ => {},
             };
 
-            if op_code == op_codes::OP_ENDIF || op_code == op_codes::OP_ELSE ||
-               op_code == op_codes::OP_NOTIF {
-                level -= 1;
-            }
+            script_elements.push((element, level));
 
-            script_elements.push((Box::new(element), level));
-
-            if op_code == op_codes::OP_IF || op_code == op_codes::OP_ELSE {
-                level += 1;
-            }
+            match code {
+                op_codes::OP_IF | op_codes::OP_ELSE => { level += 1 },
+                _ => {},
+            };
         }
 
         if level != 0 {
-            return Err(format!("Unbalanced OP_IF or IF_NOT. level={}", level));
+            return Err(format!("Unbalanced IF or IF_NOT. level={}", level));
         }
 
-        let head = self.build_script(script_elements, None, 0);
-        match head {
-            Some(x) => {
-                Ok(x.0)
-            },
-            None => Err(format!("Empty script")),
-        }
+        Ok(script_elements)
     }
 
     fn build_script<'a>(&'a self, script_elements_: Vec<(Box<ScriptElement<'a>>, u32)>,
@@ -222,6 +273,19 @@ impl Parser {
         }
 
         Some((Rc::new(*last.0), last.1))
+    }
+
+    pub fn parse(&self, script: Vec<u8>) -> Result<Rc<ScriptElement>, String> {
+        let elements = self.to_script_elements(script);
+        let compiled = self.compile_ifs(elements.unwrap());
+        let head     = self.build_script(compiled.unwrap(), None, 0);
+
+        match head {
+            Some(x) => {
+                Ok(x.0)
+            },
+            None => Err(format!("Empty script")),
+        }
     }
 
     fn get_next_branch<'a>(&'a self,
@@ -280,18 +344,18 @@ impl HumanReadableParser {
     }
 
     fn parse_non_op_code(&self, token: &str) -> Result<Vec<u8>, String> {
-        let hex = Regex::new(r"0x(?P<h>[0-9a-fA-F]+)").unwrap();
+        let hex = Regex::new(r"^0x(?P<h>[0-9a-fA-F]+)$").unwrap();
         if hex.is_match(token) {
             return Ok(hex.replace_all(token, "$h").from_hex().unwrap());
         }
 
-        let string = Regex::new(r"'(?P<s>[^']*)'").unwrap();
+        let string = Regex::new(r"^'(?P<s>[^']*)'$").unwrap();
         if string.is_match(token) {
             let result = string.replace_all(token, "$s");
             return self.parse_string_literal(&result);
         }
 
-        let number = Regex::new(r"[0-9]+").unwrap();
+        let number = Regex::new(r"^[+-]?[0-9]+$").unwrap();
         if number.is_match(token) {
             return self.parse_number(token);
         }
@@ -372,8 +436,45 @@ impl IntUtils {
         }
     }
 
+    pub fn to_u32(x: &Vec<u8>) -> u32 {
+        assert!(x.len() <= 4);
+
+        let mut result: u32 = 0;
+        if x.len() >= 1 {
+            result += *x.first().unwrap() as u32;
+        }
+
+        if x.len() >= 2 {
+            result += *x.get(1).unwrap() as u32 * 0x100;
+        }
+
+        if x.len() >= 3 {
+            result += *x.get(2).unwrap() as u32 * 0x10000;
+        }
+
+        if x.len() == 4 {
+            result += *x.get(3).unwrap() as u32 * 0x1000000;
+        }
+
+        result as u32
+    }
+
+    fn exp(x: i64, exponent: u8) -> i64 {
+        let mut result = 1;
+        for _ in 0 .. exponent {
+            result *= x;
+        }
+
+        result
+    }
+
     pub fn to_i32(x: &Vec<u8>) -> i32 {
         assert!(x.len() <= 4);
+
+        let unsigned = IntUtils::to_u32(x) as i64;
+        if unsigned == 0 {
+            return 0;
+        }
 
         let last = match x.last() {
             Some(x) => *x,
@@ -381,29 +482,11 @@ impl IntUtils {
         };
 
         let mut sign = (last & 0x80) as i64;
+        sign *= IntUtils::exp(0x100, (x.len() - 1) as u8);
 
-        let mut result: i64 = 0;
-        if x.len() >= 1 {
-            result += *x.first().unwrap() as i64;
-        }
-
-        if x.len() >= 2 {
-            result += *x.get(1).unwrap() as i64 * 0x100;
-            sign *= 0x100;
-        }
-
-        if x.len() >= 3 {
-            result += *x.get(2).unwrap() as i64 * 0x10000;
-            sign *= 0x100;
-        }
-
-        if x.len() == 4 {
-            result += *x.get(3).unwrap() as i64 * 0x1000000;
-            sign *= 0x100;
-        }
-
+        let mut result = unsigned as i64;
         if sign != 0 {
-            result = (result - sign) * -1;
+            result = sign - result;
         }
 
         result as i32
@@ -414,6 +497,60 @@ impl IntUtils {
 mod tests {
     use super::*;
     use std::rc::Rc;
+
+    #[test]
+    fn test_to_i32() {
+        assert_eq!(IntUtils::to_i32(&vec![0x01]), 1);
+        assert_eq!(IntUtils::to_i32(&vec![0x81]), -1);
+
+        assert_eq!(IntUtils::to_i32(&vec![0x7f]), 127);
+        assert_eq!(IntUtils::to_i32(&vec![0xff]), -127);
+
+        assert_eq!(IntUtils::to_i32(&vec![0x80, 0x00]), 128);
+        assert_eq!(IntUtils::to_i32(&vec![0x80, 0x80]), -128);
+
+        assert_eq!(IntUtils::to_i32(&vec![0xff, 0x7f]), 32767);
+        assert_eq!(IntUtils::to_i32(&vec![0xff, 0xff]), -32767);
+
+        assert_eq!(IntUtils::to_i32(&vec![0x00, 0x80, 0x00]), 32768);
+        assert_eq!(IntUtils::to_i32(&vec![0x00, 0x80, 0x80]), -32768);
+
+        assert_eq!(IntUtils::to_i32(&vec![0xff, 0xff, 0x7f]), 8388607);
+        assert_eq!(IntUtils::to_i32(&vec![0xff, 0xff, 0xff]), -8388607);
+
+        assert_eq!(IntUtils::to_i32(&vec![0x00, 0x00, 0x80, 0x00]), 8388608);
+        assert_eq!(IntUtils::to_i32(&vec![0x00, 0x00, 0x80, 0x80]), -8388608);
+
+        assert_eq!(IntUtils::to_i32(&vec![0xff, 0xff, 0xff, 0x7f]), 2147483647);
+        assert_eq!(IntUtils::to_i32(&vec![0xff, 0xff, 0xff, 0xff]), -2147483647);
+    }
+
+    #[test]
+    fn test_to_vec_u8() {
+        assert_eq!(vec![0x01], IntUtils::to_vec_u8(1));
+        assert_eq!(vec![0x81], IntUtils::to_vec_u8(-1));
+
+        assert_eq!(vec![0x7f], IntUtils::to_vec_u8(127));
+        assert_eq!(vec![0xff], IntUtils::to_vec_u8(-127));
+
+        assert_eq!(vec![0x80, 0x00], IntUtils::to_vec_u8(128));
+        assert_eq!(vec![0x80, 0x80], IntUtils::to_vec_u8(-128));
+
+        assert_eq!(vec![0xff, 0x7f], IntUtils::to_vec_u8(32767));
+        assert_eq!(vec![0xff, 0xff], IntUtils::to_vec_u8(-32767));
+
+        assert_eq!(vec![0x00, 0x80, 0x00], IntUtils::to_vec_u8(32768));
+        assert_eq!(vec![0x00, 0x80, 0x80], IntUtils::to_vec_u8(-32768));
+
+        assert_eq!(vec![0xff, 0xff, 0x7f], IntUtils::to_vec_u8(8388607));
+        assert_eq!(vec![0xff, 0xff, 0xff], IntUtils::to_vec_u8(-8388607));
+
+        assert_eq!(vec![0x00, 0x00, 0x80, 0x00], IntUtils::to_vec_u8(8388608));
+        assert_eq!(vec![0x00, 0x00, 0x80, 0x80], IntUtils::to_vec_u8(-8388608));
+
+        assert_eq!(vec![0xff, 0xff, 0xff, 0x7f], IntUtils::to_vec_u8(2147483647));
+        assert_eq!(vec![0xff, 0xff, 0xff, 0xff], IntUtils::to_vec_u8(-2147483647));
+    }
 
     fn print_script(head: Rc<ScriptElement>) {
         print!("{:?} -(next)-> {:?} -(else)-> {:?}\n",
@@ -441,7 +578,7 @@ mod tests {
         assert!(data.is_ok());
         print_script(data.clone().unwrap());
 
-        assert!(parser.execute(vec![], data.unwrap()) == expected);
+        assert_eq!(parser.execute(vec![], data.unwrap()), expected);
     }
 
     #[test]
@@ -567,6 +704,16 @@ mod tests {
 
         test_parse_execute("444 1SUB 443 EQUAL", true);
 
+        test_parse_execute("PUSHDATA1 0x01 0x02 0x01 0x02 EQUAL", true);
+        test_parse_execute("PUSHDATA2 0x0100 0x02 0x01 0x02 EQUAL", true);
+        test_parse_execute("PUSHDATA4 0x01000000 0x02 0x01 0x02 EQUAL", true);
+
+        // For some reason the official bitcoin clinet uses 0x4b - 0x4d for PUSHDATA1-4
+        // so we chack that works too here
+        test_parse_execute("0x4c 0x01 0x02 0x01 0x02 EQUAL", true);
+        test_parse_execute("0x4d 0x0100 0x02 0x01 0x02 EQUAL", true);
+        test_parse_execute("0x4e 0x01000000 0x02 0x01 0x02 EQUAL", true);
+
         // copied from https://github.com/bitcoin/bitcoin/blob/master/src/test/data/script_valid.json
         test_parse_execute("0 0 EQUAL", true);
         test_parse_execute("1 1 ADD 2 EQUAL", true);
@@ -647,59 +794,7 @@ mod tests {
         test_parse_execute("'a' HASH160 NOP 0x14 0x994355199e516ff76c4fa4aab39337b9d84cf12b EQUAL", true);
         test_parse_execute("'' HASH256 0x20 0x5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456 EQUAL", true);
         test_parse_execute("'a' HASH256 0x20 0xbf5d3affb73efd2ec6c36ad3112dd933efed63c4e1cbffcfa88e2759c144f2d8 EQUAL", true);
-    }
-
-    #[test]
-    fn test_to_i32() {
-        assert_eq!(IntUtils::to_i32(&vec![0x01]), 1);
-        assert_eq!(IntUtils::to_i32(&vec![0x81]), -1);
-
-        assert_eq!(IntUtils::to_i32(&vec![0x7f]), 127);
-        assert_eq!(IntUtils::to_i32(&vec![0xff]), -127);
-
-        assert_eq!(IntUtils::to_i32(&vec![0x80, 0x00]), 128);
-        assert_eq!(IntUtils::to_i32(&vec![0x80, 0x80]), -128);
-
-        assert_eq!(IntUtils::to_i32(&vec![0xff, 0x7f]), 32767);
-        assert_eq!(IntUtils::to_i32(&vec![0xff, 0xff]), -32767);
-
-        assert_eq!(IntUtils::to_i32(&vec![0x00, 0x80, 0x00]), 32768);
-        assert_eq!(IntUtils::to_i32(&vec![0x00, 0x80, 0x80]), -32768);
-
-        assert_eq!(IntUtils::to_i32(&vec![0xff, 0xff, 0x7f]), 8388607);
-        assert_eq!(IntUtils::to_i32(&vec![0xff, 0xff, 0xff]), -8388607);
-
-        assert_eq!(IntUtils::to_i32(&vec![0x00, 0x00, 0x80, 0x00]), 8388608);
-        assert_eq!(IntUtils::to_i32(&vec![0x00, 0x00, 0x80, 0x80]), -8388608);
-
-        assert_eq!(IntUtils::to_i32(&vec![0xff, 0xff, 0xff, 0x7f]), 2147483647);
-        assert_eq!(IntUtils::to_i32(&vec![0xff, 0xff, 0xff, 0xff]), -2147483647);
-    }
-
-    #[test]
-    fn test_to_vec_u8() {
-        assert_eq!(vec![0x01], IntUtils::to_vec_u8(1));
-        assert_eq!(vec![0x81], IntUtils::to_vec_u8(-1));
-
-        assert_eq!(vec![0x7f], IntUtils::to_vec_u8(127));
-        assert_eq!(vec![0xff], IntUtils::to_vec_u8(-127));
-
-        assert_eq!(vec![0x80, 0x00], IntUtils::to_vec_u8(128));
-        assert_eq!(vec![0x80, 0x80], IntUtils::to_vec_u8(-128));
-
-        assert_eq!(vec![0xff, 0x7f], IntUtils::to_vec_u8(32767));
-        assert_eq!(vec![0xff, 0xff], IntUtils::to_vec_u8(-32767));
-
-        assert_eq!(vec![0x00, 0x80, 0x00], IntUtils::to_vec_u8(32768));
-        assert_eq!(vec![0x00, 0x80, 0x80], IntUtils::to_vec_u8(-32768));
-
-        assert_eq!(vec![0xff, 0xff, 0x7f], IntUtils::to_vec_u8(8388607));
-        assert_eq!(vec![0xff, 0xff, 0xff], IntUtils::to_vec_u8(-8388607));
-
-        assert_eq!(vec![0x00, 0x00, 0x80, 0x00], IntUtils::to_vec_u8(8388608));
-        assert_eq!(vec![0x00, 0x00, 0x80, 0x80], IntUtils::to_vec_u8(-8388608));
-
-        assert_eq!(vec![0xff, 0xff, 0xff, 0x7f], IntUtils::to_vec_u8(2147483647));
-        assert_eq!(vec![0xff, 0xff, 0xff, 0xff], IntUtils::to_vec_u8(-2147483647));
+        test_parse_execute("0x4c 0x4b 0x111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111 0x4b 0x111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111 EQUAL", true);
+        test_parse_execute("0x4d 0xFF00 0x111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111 0x4c 0xFF 0x111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111 EQUAL", true);
     }
 }

@@ -414,11 +414,6 @@ pub fn op_notif(context: Context) -> Context {
     new_context
 }
 
-pub fn op_else(_: Context) -> Context {
-    // this op should never be invoked
-    unimplemented!()
-}
-
 pub fn op_endif(context: Context) -> Context { context }
 
 pub fn is_true(element: &Option<&Vec<u8>>) -> bool {
@@ -454,6 +449,10 @@ pub fn op_size(context: Context) -> Context {
     })
 }
 
+pub fn op_unreachable(_: Context) -> Context {
+    unimplemented!()
+}
+
 impl cmp::PartialEq for OpCode {
     fn eq(&self, other: &OpCode) -> bool {
         self.name == other.name && self.code == other.code
@@ -483,9 +482,12 @@ impl<'a> cmp::PartialEq for Context<'a> {
 pub const OP_PUSHDATA : (&'static str, u8, bool, fn(Context) -> Context) =
     ("PUSHDATA",     0x01, false, op_pushdata);
 
-pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 82] = [
+pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 85] = [
     ("0",                  0x00, false, op_false),
     // opcodes 0x02 - 0x4b op_pushdata
+    ("PUSHDATA1",          0x4c, false, op_unreachable),
+    ("PUSHDATA2",          0x4d, false, op_unreachable),
+    ("PUSHDATA4",          0x4e, false, op_unreachable),
     ("1NEGATE",            0x4f, false, op_1negate),
     // TODO: opcode 0x50 (reserved opcode)
     ("1",                  0x51, false, op_1),
@@ -509,7 +511,7 @@ pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 82] = [
     ("IF",                 0x63, true,  op_if),
     ("NOTIF",              0x64, true,  op_notif),
     // TODO: opcodes 0x65 - 0x66 (reserved opcodes)
-    ("ELSE",               0x67, false, op_else),
+    ("ELSE",               0x67, false, op_unreachable),
     ("ENDIF",              0x68, false, op_endif),
     ("VERIFY",             0x69, false, op_verify),
     ("RETURN",             0x6a, false, op_return),
