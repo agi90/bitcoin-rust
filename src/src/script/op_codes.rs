@@ -486,9 +486,9 @@ pub const OP_PUSHDATA : (&'static str, u8, bool, fn(Context) -> Context) =
 pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 85] = [
     ("0",                  0x00, false, op_false),
     // opcodes 0x02 - 0x4b op_pushdata
-    ("PUSHDATA1",          0x4c, false, op_unreachable),
-    ("PUSHDATA2",          0x4d, false, op_unreachable),
-    ("PUSHDATA4",          0x4e, false, op_unreachable),
+    ("PUSHDATA1",          0x4c, false, op_pushdata),
+    ("PUSHDATA2",          0x4d, false, op_pushdata),
+    ("PUSHDATA4",          0x4e, false, op_pushdata),
     ("1NEGATE",            0x4f, false, op_1negate),
     // TODO: opcode 0x50 (reserved opcode)
     ("1",                  0x51, false, op_1),

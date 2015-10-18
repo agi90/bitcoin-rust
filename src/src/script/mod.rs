@@ -22,7 +22,7 @@ pub struct ScriptElement<'a> {
     data: Vec<u8>,
     next: Option<Rc<ScriptElement<'a>>>,
     next_else: Option<Rc<ScriptElement<'a>>>,
-    id: u32,
+    id: usize,
 }
 
 pub struct OpCode {
@@ -44,7 +44,7 @@ impl<'a> Context<'a> {
 }
 
 impl<'a> ScriptElement<'a> {
-    pub fn new(op_code: &'a OpCode, data: Vec<u8>, id: u32) -> ScriptElement {
+    pub fn new(op_code: &'a OpCode, data: Vec<u8>, id: usize) -> ScriptElement {
         ScriptElement {
             op_code: op_code,
             data: data,
@@ -83,7 +83,6 @@ impl OpCode {
 
 pub struct Parser {
     op_codes : HashMap<u8, OpCode>,
-    op_pushdata : OpCode,
     human_readable_parser: HumanReadableParser,
 }
 
@@ -96,18 +95,25 @@ impl Parser {
                 op_codes.insert(op_code.0, op_code.1);
             };
 
+        for op in 0x01..0x4c {
+            op_codes.insert(op, OpCode::new(op_codes::OP_PUSHDATA.0,
+                                            op,
+                                            op_codes::OP_PUSHDATA.2,
+                                            op_codes::OP_PUSHDATA.3));
+        }
+
         Parser {
             op_codes: op_codes,
-            op_pushdata: OpCode::new(op_codes::OP_PUSHDATA.0,
-                                     op_codes::OP_PUSHDATA.1,
-                                     op_codes::OP_PUSHDATA.2,
-                                     op_codes::OP_PUSHDATA.3),
             human_readable_parser: HumanReadableParser::new(&op_codes::OP_CODES),
         }
     }
 
+    pub fn preprocess_human_readable(&self, script: &str) -> Result<Vec<u8>, String> {
+        self.human_readable_parser.parse(script)
+    }
+
     pub fn parse_human_readable(&self, script: &str) -> Result<Rc<ScriptElement>, String> {
-        let human_parsed = self.human_readable_parser.parse(script);
+        let human_parsed = self.preprocess_human_readable(script);
 
         match human_parsed {
             Err(x) => Err(x),
@@ -151,18 +157,20 @@ impl Parser {
     fn to_script_elements(&self, script_: Vec<u8>) -> Result<Vec<Box<ScriptElement>>, String> {
         let mut script = script_;
         let mut script_elements: Vec<Box<ScriptElement>> = vec![];
-        let mut id = 0;
+        let len = script.len();
 
         script.reverse();
         while script.len() > 0 {
             let op_code = script.pop().unwrap();
-            let element: ScriptElement;
+            let op = match self.op_codes.get(&op_code) {
+                Some(x) => x,
+                None => return Err(format!("Op `0x{:2x}` not recognized.", op_code)),
+            };
 
-            match op_code {
-                0x01 ... 0x4b => {
-                    let data = self.get_data(&mut script, op_code as i32);
-                    element = ScriptElement::new(&self.op_pushdata, data.unwrap(), id);
-                },
+            let id = len - script.len() - 1;
+
+            let data = match op.code {
+                0x01 ... 0x4b => self.get_data(&mut script, op.code as i32),
                 // PUSHDATA{1,2,4}
                 0x4c ... 0x4e => {
                     let bytes = match op_code {
@@ -172,20 +180,12 @@ impl Parser {
                         _ => unreachable!(),
                     };
 
-                    let data = self.get_data_bytes(&mut script, bytes);
-                    element = ScriptElement::new(&self.op_pushdata, data.unwrap(), id);
+                    self.get_data_bytes(&mut script, bytes)
                 },
-                _ => match self.op_codes.get(&op_code) {
-                    Some(x) => {
-                        element = ScriptElement::new(x, vec![], id);
-                    },
-                    None => {
-                        return Err(format!("Unrecognized op code `0x{:x}`\n", op_code));
-                    },
-                },
+                _ => Ok(vec![]),
             };
 
-            id += 1;
+            let element = ScriptElement::new(op, data.unwrap(), id);
             script_elements.push(Box::new(element));
         }
 
@@ -433,7 +433,8 @@ mod tests {
         print!("\n\n {}\n", script);
         let parser = Parser::new();
 
-        let data = parser.parse_human_readable(script);
+        let raw_script = parser.preprocess_human_readable(script).unwrap();
+        let data = parser.parse(raw_script.clone());
 
         match &data {
             &Ok(_) => {},
@@ -442,6 +443,17 @@ mod tests {
 
         assert!(data.is_ok());
         print_script(data.clone().unwrap());
+
+        let mut el = Some(data.clone().unwrap());
+        while el != None {
+            let e = el.unwrap();
+
+            // Test that the id and the actual position in the script coincide
+            // TODO: test both branches of the if.
+            assert_eq!(raw_script[e.id], e.op_code.code);
+
+            el = e.next.clone();
+        }
 
         assert_eq!(parser.execute(vec![], data.unwrap()), expected);
     }
