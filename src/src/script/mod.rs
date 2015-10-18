@@ -15,6 +15,7 @@ pub struct Context<'a> {
     stack: Vec<Vec<u8>>,
     valid: bool,
     altstack: Vec<Vec<u8>>,
+    codeseparator: usize,
 }
 
 pub struct ScriptElement<'a> {
@@ -39,6 +40,7 @@ impl<'a> Context<'a> {
             stack: stack,
             valid: true,
             altstack: vec![],
+            codeseparator: 0,
         }
     }
 }

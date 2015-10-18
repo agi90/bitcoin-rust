@@ -327,6 +327,14 @@ pub fn op_ripemd160(context: Context) -> Context {
     })
 }
 
+pub fn op_codeseparator(context: Context) -> Context {
+    let mut new_context = context;
+
+    new_context.codeseparator = new_context.data.id;
+
+    new_context
+}
+
 pub fn op_hash160(context: Context) -> Context {
     stack_op(context, |st| {
         let last = st.pop().unwrap();
@@ -483,7 +491,7 @@ impl<'a> cmp::PartialEq for Context<'a> {
 pub const OP_PUSHDATA : (&'static str, u8, bool, fn(Context) -> Context) =
     ("PUSHDATA",     0x01, false, op_pushdata);
 
-pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 85] = [
+pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 86] = [
     ("0",                  0x00, false, op_false),
     // opcodes 0x02 - 0x4b op_pushdata
     ("PUSHDATA1",          0x4c, false, op_pushdata),
@@ -568,8 +576,8 @@ pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 85] = [
     ("SHA256",             0xa8, false, op_sha256),
     ("HASH160",            0xa9, false, op_hash160),
     ("HASH256",            0xaa, false, op_hash256),
-    // TODO: opcodes 0xab - 0xaf
-    // ("CODESEPARATOR",         0xab, false, op_codeseparator),
+    ("CODESEPARATOR",      0xab, false, op_codeseparator),
+    // TODO: opcodes 0xac - 0xaf
     // ("CHECKSIG",              0xac, false, op_checksig),
     // ("CHECKSIGVERIFY",        0xad, false, op_codeseparator),
     // ("CHECKMULTISIG",         0xae, false, op_checkmultisig),
@@ -977,5 +985,17 @@ mod tests {
                                  vec![vec![0x01], vec![0x01]]);
         test_stack_base(op_size, vec![vec![0x01, 0x02]],
                                  vec![vec![0x01, 0x02], vec![0x02]]);
+    }
+
+    #[test]
+    fn test_op_codeseparator() {
+        let op_code = &TEST_OP_CODE;
+        let script_element = Rc::new(ScriptElement::new(op_code, vec![], 4));
+
+        let context = Context::new(script_element.clone(), vec![]);
+        let mut expected = Context::new(script_element, vec![]);
+        expected.codeseparator = 4;
+
+        assert_eq!(expected, op_codeseparator(context));
     }
 }
