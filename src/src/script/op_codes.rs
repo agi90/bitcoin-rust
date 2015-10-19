@@ -335,6 +335,90 @@ pub fn op_codeseparator(context: Context) -> Context {
     new_context
 }
 
+fn get_boolean(data: bool) -> Vec<u8> {
+    if data {
+        vec![0x01]
+    } else {
+        vec![]
+    }
+}
+
+pub fn op_checksig(context: Context) -> Context {
+    assert!(context.stack.len() >= 2);
+
+    let codeseparator = context.codeseparator;
+    let checksig = context.checksig;
+    let mut new_context = context;
+
+    let pub_key_str = new_context.stack.pop().unwrap();
+    let sig_str = new_context.stack.pop().unwrap();
+
+    let result = get_boolean(checksig(codeseparator, &pub_key_str, &sig_str));
+
+    new_context.stack.push(result);
+
+    new_context
+}
+
+pub fn op_checksigverify(context: Context) -> Context {
+    op_verify(op_checksig(context))
+}
+
+pub fn op_checkmultisig(context: Context) -> Context {
+    assert!(context.stack.len() > 1);
+
+    let codeseparator = context.codeseparator;
+    let checksig = context.checksig;
+    let mut new_context = context;
+
+    let pub_keys_number = IntUtils::to_i32(&new_context.stack.pop().unwrap());
+    assert!(pub_keys_number >= 0);
+    assert!(pub_keys_number <= 20);
+    assert!(new_context.stack.len() > pub_keys_number as usize);
+
+    let mut pub_keys = vec![];
+    for _ in 0..pub_keys_number {
+        pub_keys.push(new_context.stack.pop().unwrap());
+    }
+    pub_keys.reverse();
+
+    let sig_strs_number = IntUtils::to_i32(&new_context.stack.pop().unwrap());
+    assert!(sig_strs_number >= 0);
+    assert!(sig_strs_number <= pub_keys_number);
+    assert!(new_context.stack.len() > sig_strs_number as usize);
+
+    let mut sig_strs = vec![];
+    for _ in 0..sig_strs_number {
+        sig_strs.push(new_context.stack.pop().unwrap());
+    }
+    sig_strs.reverse();
+
+    let mut verified = 0;
+    while pub_keys.len() > 0 && sig_strs.len() > 0 {
+        let sig_str = sig_strs.pop().unwrap();
+        while pub_keys.len() > 0 {
+            let pub_key = pub_keys.pop().unwrap();
+            if checksig(codeseparator, &pub_key, &sig_str) {
+                verified += 1;
+                break;
+            }
+        }
+    }
+
+    let result = verified == sig_strs_number;
+    // Apparently the official client has a bug that
+    // pops an extra element from the stack that we have
+    // to emulate here.
+    new_context.stack.pop();
+    new_context.stack.push(get_boolean(result));
+
+    new_context
+}
+
+pub fn op_checkmultisigverify(context: Context) -> Context {
+    op_verify(op_checkmultisig(context))
+}
+
 pub fn op_hash160(context: Context) -> Context {
     stack_op(context, |st| {
         let last = st.pop().unwrap();
@@ -353,8 +437,7 @@ pub fn op_equal(context: Context) -> Context {
         let x = st.pop().unwrap();
         let y = st.pop().unwrap();
 
-        let result = if x.eq(&y) { vec![0x01] } else { vec![] };
-        st.push(result);
+        st.push(get_boolean(x.eq(&y)));
     })
 }
 
@@ -491,7 +574,7 @@ impl<'a> cmp::PartialEq for Context<'a> {
 pub const OP_PUSHDATA : (&'static str, u8, bool, fn(Context) -> Context) =
     ("PUSHDATA",     0x01, false, op_pushdata);
 
-pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 86] = [
+pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 90] = [
     ("0",                  0x00, false, op_false),
     // opcodes 0x02 - 0x4b op_pushdata
     ("PUSHDATA1",          0x4c, false, op_pushdata),
@@ -577,11 +660,10 @@ pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 86] = [
     ("HASH160",            0xa9, false, op_hash160),
     ("HASH256",            0xaa, false, op_hash256),
     ("CODESEPARATOR",      0xab, false, op_codeseparator),
-    // TODO: opcodes 0xac - 0xaf
-    // ("CHECKSIG",              0xac, false, op_checksig),
-    // ("CHECKSIGVERIFY",        0xad, false, op_codeseparator),
-    // ("CHECKMULTISIG",         0xae, false, op_checkmultisig),
-    // ("CHECKMULTISIGVERIFY",   0xaf, false, op_checkmultisigverify),
+    ("CHECKSIG",           0xac, false, op_checksig),
+    ("CHECKSIGVERIFY",     0xad, false, op_checksigverify),
+    ("CHECKMULTISIG",      0xae, false, op_checkmultisig),
+    ("CHECKMULTISIGVERIFY",0xaf, false, op_checkmultisigverify),
     ("NOP1",               0xb0, false, op_nop),
     ("NOP2",               0xb1, false, op_nop),
     ("NOP3",               0xb2, false, op_nop),
@@ -614,6 +696,8 @@ mod tests {
 
     const ZERO : u8 = 0x80;
 
+    fn mock_checksig(_: usize, _: &Vec<u8>, _: &Vec<u8>) -> bool { true }
+
     static TEST_OP_CODE: OpCode = OpCode {
         name: "TEST",
         code: 0x00,
@@ -644,7 +728,7 @@ mod tests {
         let op_code = &TEST_OP_CODE;
         let script_element = ScriptElement::new(op_code, vec![], 0);
 
-        Context::new(Rc::new(script_element), stack)
+        Context::new(Rc::new(script_element), stack, mock_checksig)
     }
 
     #[test]
@@ -762,8 +846,8 @@ mod tests {
 
         let op_code = &TEST_OP_CODE;
         let script_element = Rc::new(ScriptElement::new(op_code, data.clone(), 0));
-        let context = Context::new(script_element.clone(), vec![]);
-        let expected = Context::new(script_element.clone(), vec![data]);
+        let context = Context::new(script_element.clone(), vec![], mock_checksig);
+        let expected = Context::new(script_element.clone(), vec![data], mock_checksig);
 
         let output = op_pushdata(context);
         assert_eq!(output, expected);
@@ -992,8 +1076,8 @@ mod tests {
         let op_code = &TEST_OP_CODE;
         let script_element = Rc::new(ScriptElement::new(op_code, vec![], 4));
 
-        let context = Context::new(script_element.clone(), vec![]);
-        let mut expected = Context::new(script_element, vec![]);
+        let context = Context::new(script_element.clone(), vec![], mock_checksig);
+        let mut expected = Context::new(script_element, vec![], mock_checksig);
         expected.codeseparator = 4;
 
         assert_eq!(expected, op_codeseparator(context));

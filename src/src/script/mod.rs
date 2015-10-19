@@ -16,6 +16,8 @@ pub struct Context<'a> {
     valid: bool,
     altstack: Vec<Vec<u8>>,
     codeseparator: usize,
+    // fn(codeseparator: usize, pub_key_str: Vec<u8>, sig_str: Vec<u8) -> bool
+    checksig: fn(usize, &Vec<u8>, &Vec<u8>) -> bool,
 }
 
 pub struct ScriptElement<'a> {
@@ -34,13 +36,15 @@ pub struct OpCode {
 }
 
 impl<'a> Context<'a> {
-    pub fn new(data: Rc<ScriptElement<'a>>, stack: Vec<Vec<u8>>) -> Context {
+    pub fn new(data: Rc<ScriptElement<'a>>, stack: Vec<Vec<u8>>,
+               checksig: fn(usize, &Vec<u8>, &Vec<u8>) -> bool) -> Context {
         Context {
             data: data,
             stack: stack,
             valid: true,
             altstack: vec![],
             codeseparator: 0,
+            checksig: checksig,
         }
     }
 }
@@ -303,8 +307,9 @@ impl Parser {
     }
 
     pub fn execute(&self, input_stack: Vec<Vec<u8>>,
-                   parsed_script: Rc<ScriptElement>) -> bool {
-        let mut context = Context::new(parsed_script, input_stack);
+                   parsed_script: Rc<ScriptElement>,
+                   checksig: fn(usize, &Vec<u8>, &Vec<u8>) -> bool) -> bool {
+        let mut context = Context::new(parsed_script, input_stack, checksig);
         let mut done = false;
 
         while !done && context.valid {
@@ -419,6 +424,10 @@ mod tests {
     use super::*;
     use std::rc::Rc;
 
+    fn mock_checksig(_: usize, _: &Vec<u8>, _: &Vec<u8>) -> bool { true }
+
+    fn equal_checksig(_: usize, x: &Vec<u8>, y: &Vec<u8>) -> bool { x.eq(y) }
+
     fn print_script(head: Rc<ScriptElement>) {
         print!("{:?} -(next)-> {:?} -(else)-> {:?}\n",
             head, head.next.clone(), head.next_else.clone());
@@ -431,8 +440,10 @@ mod tests {
         }
     }
 
-    fn test_parse_execute(script: &str, expected: bool) {
-        print!("\n\n {}\n", script);
+    fn test_with_checksig(script: &str,
+                          expected: bool,
+                          checksig: fn(usize, &Vec<u8>, &Vec<u8>) -> bool) {
+        print!("\n\n {} [expected={}]\n", script, expected);
         let parser = Parser::new();
 
         let raw_script = parser.preprocess_human_readable(script).unwrap();
@@ -457,7 +468,30 @@ mod tests {
             el = e.next.clone();
         }
 
-        assert_eq!(parser.execute(vec![], data.unwrap()), expected);
+        assert_eq!(parser.execute(vec![], data.unwrap(), checksig), expected);
+    }
+
+    fn test_parse_execute(script: &str, expected: bool) {
+        test_with_checksig(script, expected, mock_checksig);
+    }
+
+    #[test]
+    fn test_checksig() {
+        test_with_checksig("1 1 CHECKSIG", true, equal_checksig);
+        test_with_checksig("1 2 CHECKSIG", false, equal_checksig);
+        test_with_checksig("'this_is_my_sig' 'this_is_my_sig' CHECKSIG", true, equal_checksig);
+        test_with_checksig("0 'a' 'b' 2 'c' 'd' 'a' 'b' 4 CHECKMULTISIGVERIFY DEPTH 0 EQUAL",
+                           true, equal_checksig);
+        test_with_checksig("0 'a' 'b' 2 'c' 'd' 'b' 'a' 4 CHECKMULTISIGVERIFY DEPTH 0 EQUAL",
+                           false, equal_checksig);
+        test_with_checksig("0 'a' 1 'b' 1 CHECKMULTISIGVERIFY DEPTH 0 EQUAL",
+                           false, equal_checksig);
+        test_with_checksig("0 'a' 1 'b' 'c' 2 CHECKMULTISIGVERIFY DEPTH 0 EQUAL",
+                           false, equal_checksig);
+        test_with_checksig("0 'a' 1 'b' 'c' 'd' 3 CHECKMULTISIGVERIFY DEPTH 0 EQUAL",
+                           false, equal_checksig);
+        test_with_checksig("0 'a' 1 'b' 'c' 'd' 'a' 4 CHECKMULTISIGVERIFY DEPTH 0 EQUAL",
+                           true, equal_checksig);
     }
 
     #[test]
@@ -675,5 +709,49 @@ mod tests {
         test_parse_execute("'a' HASH256 0x20 0xbf5d3affb73efd2ec6c36ad3112dd933efed63c4e1cbffcfa88e2759c144f2d8 EQUAL", true);
         test_parse_execute("0x4c 0x4b 0x111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111 0x4b 0x111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111 EQUAL", true);
         test_parse_execute("0x4d 0xFF00 0x111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111 0x4c 0xFF 0x111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111 EQUAL", true);
+        test_parse_execute("0 0 0 CHECKMULTISIG VERIFY DEPTH 0 EQUAL", true);
+        test_parse_execute("0 0 0 CHECKMULTISIGVERIFY DEPTH 0 EQUAL", true);
+        test_parse_execute("0 0 0 1 CHECKMULTISIG VERIFY DEPTH 0 EQUAL", true);
+        test_parse_execute("0 0 0 1 CHECKMULTISIGVERIFY DEPTH 0 EQUAL", true);
+
+        test_parse_execute("0 0 'a' 'b' 2 CHECKMULTISIG VERIFY DEPTH 0 EQUAL", true);
+        test_parse_execute("0 0 'a' 'b' 'c' 3 CHECKMULTISIG VERIFY DEPTH 0 EQUAL", true);
+        test_parse_execute("0 0 'a' 'b' 'c' 'd' 4 CHECKMULTISIG VERIFY DEPTH 0 EQUAL", true);
+        test_parse_execute("0 0 'a' 'b' 'c' 'd' 'e' 5 CHECKMULTISIG VERIFY DEPTH 0 EQUAL", true);
+        test_parse_execute("0 0 'a' 'b' 'c' 'd' 'e' 'f' 6 CHECKMULTISIG VERIFY DEPTH 0 EQUAL", true);
+        test_parse_execute("0 0 'a' 'b' 'c' 'd' 'e' 'f' 'g' 7 CHECKMULTISIG VERIFY DEPTH 0 EQUAL", true);
+        test_parse_execute("0 0 'a' 'b' 'c' 'd' 'e' 'f' 'g' 'h' 8 CHECKMULTISIG VERIFY DEPTH 0 EQUAL", true);
+        test_parse_execute("0 0 'a' 'b' 'c' 'd' 'e' 'f' 'g' 'h' 'i' 9 CHECKMULTISIG VERIFY DEPTH 0 EQUAL", true);
+        test_parse_execute("0 0 'a' 'b' 'c' 'd' 'e' 'f' 'g' 'h' 'i' 'j' 10 CHECKMULTISIG VERIFY DEPTH 0 EQUAL", true);
+        test_parse_execute("0 0 'a' 'b' 'c' 'd' 'e' 'f' 'g' 'h' 'i' 'j' 'k' 11 CHECKMULTISIG VERIFY DEPTH 0 EQUAL", true);
+        test_parse_execute("0 0 'a' 'b' 'c' 'd' 'e' 'f' 'g' 'h' 'i' 'j' 'k' 'l' 12 CHECKMULTISIG VERIFY DEPTH 0 EQUAL", true);
+        test_parse_execute("0 0 'a' 'b' 'c' 'd' 'e' 'f' 'g' 'h' 'i' 'j' 'k' 'l' 'm' 13 CHECKMULTISIG VERIFY DEPTH 0 EQUAL", true);
+        test_parse_execute("0 0 'a' 'b' 'c' 'd' 'e' 'f' 'g' 'h' 'i' 'j' 'k' 'l' 'm' 'n' 14 CHECKMULTISIG VERIFY DEPTH 0 EQUAL", true);
+        test_parse_execute("0 0 'a' 'b' 'c' 'd' 'e' 'f' 'g' 'h' 'i' 'j' 'k' 'l' 'm' 'n' 'o' 15 CHECKMULTISIG VERIFY DEPTH 0 EQUAL", true);
+        test_parse_execute("0 0 'a' 'b' 'c' 'd' 'e' 'f' 'g' 'h' 'i' 'j' 'k' 'l' 'm' 'n' 'o' 'p' 16 CHECKMULTISIG VERIFY DEPTH 0 EQUAL", true);
+        test_parse_execute("0 0 'a' 'b' 'c' 'd' 'e' 'f' 'g' 'h' 'i' 'j' 'k' 'l' 'm' 'n' 'o' 'p' 'q' 17 CHECKMULTISIG VERIFY DEPTH 0 EQUAL", true);
+        test_parse_execute("0 0 'a' 'b' 'c' 'd' 'e' 'f' 'g' 'h' 'i' 'j' 'k' 'l' 'm' 'n' 'o' 'p' 'q' 'r' 18 CHECKMULTISIG VERIFY DEPTH 0 EQUAL", true);
+        test_parse_execute("0 0 'a' 'b' 'c' 'd' 'e' 'f' 'g' 'h' 'i' 'j' 'k' 'l' 'm' 'n' 'o' 'p' 'q' 'r' 's' 19 CHECKMULTISIG VERIFY DEPTH 0 EQUAL", true);
+        test_parse_execute("0 0 'a' 'b' 'c' 'd' 'e' 'f' 'g' 'h' 'i' 'j' 'k' 'l' 'm' 'n' 'o' 'p' 'q' 'r' 's' 't' 20 CHECKMULTISIG VERIFY DEPTH 0 EQUAL", true);
+        test_parse_execute("0 0 'a' 1 CHECKMULTISIGVERIFY DEPTH 0 EQUAL", true);
+        test_parse_execute("0 0 'a' 'b' 2 CHECKMULTISIGVERIFY DEPTH 0 EQUAL", true);
+        test_parse_execute("0 0 'a' 'b' 'c' 3 CHECKMULTISIGVERIFY DEPTH 0 EQUAL", true);
+        test_parse_execute("0 0 'a' 'b' 'c' 'd' 4 CHECKMULTISIGVERIFY DEPTH 0 EQUAL", true);
+        test_parse_execute("0 0 'a' 'b' 'c' 'd' 'e' 5 CHECKMULTISIGVERIFY DEPTH 0 EQUAL", true);
+        test_parse_execute("0 0 'a' 'b' 'c' 'd' 'e' 'f' 6 CHECKMULTISIGVERIFY DEPTH 0 EQUAL", true);
+        test_parse_execute("0 0 'a' 'b' 'c' 'd' 'e' 'f' 'g' 7 CHECKMULTISIGVERIFY DEPTH 0 EQUAL", true);
+        test_parse_execute("0 0 'a' 'b' 'c' 'd' 'e' 'f' 'g' 'h' 8 CHECKMULTISIGVERIFY DEPTH 0 EQUAL", true);
+        test_parse_execute("0 0 'a' 'b' 'c' 'd' 'e' 'f' 'g' 'h' 'i' 9 CHECKMULTISIGVERIFY DEPTH 0 EQUAL", true);
+        test_parse_execute("0 0 'a' 'b' 'c' 'd' 'e' 'f' 'g' 'h' 'i' 'j' 10 CHECKMULTISIGVERIFY DEPTH 0 EQUAL", true);
+        test_parse_execute("0 0 'a' 'b' 'c' 'd' 'e' 'f' 'g' 'h' 'i' 'j' 'k' 11 CHECKMULTISIGVERIFY DEPTH 0 EQUAL", true);
+        test_parse_execute("0 0 'a' 'b' 'c' 'd' 'e' 'f' 'g' 'h' 'i' 'j' 'k' 'l' 12 CHECKMULTISIGVERIFY DEPTH 0 EQUAL", true);
+        test_parse_execute("0 0 'a' 'b' 'c' 'd' 'e' 'f' 'g' 'h' 'i' 'j' 'k' 'l' 'm' 13 CHECKMULTISIGVERIFY DEPTH 0 EQUAL", true);
+        test_parse_execute("0 0 'a' 'b' 'c' 'd' 'e' 'f' 'g' 'h' 'i' 'j' 'k' 'l' 'm' 'n' 14 CHECKMULTISIGVERIFY DEPTH 0 EQUAL", true);
+        test_parse_execute("0 0 'a' 'b' 'c' 'd' 'e' 'f' 'g' 'h' 'i' 'j' 'k' 'l' 'm' 'n' 'o' 15 CHECKMULTISIGVERIFY DEPTH 0 EQUAL", true);
+        test_parse_execute("0 0 'a' 'b' 'c' 'd' 'e' 'f' 'g' 'h' 'i' 'j' 'k' 'l' 'm' 'n' 'o' 'p' 16 CHECKMULTISIGVERIFY DEPTH 0 EQUAL", true);
+        test_parse_execute("0 0 'a' 'b' 'c' 'd' 'e' 'f' 'g' 'h' 'i' 'j' 'k' 'l' 'm' 'n' 'o' 'p' 'q' 17 CHECKMULTISIGVERIFY DEPTH 0 EQUAL", true);
+        test_parse_execute("0 0 'a' 'b' 'c' 'd' 'e' 'f' 'g' 'h' 'i' 'j' 'k' 'l' 'm' 'n' 'o' 'p' 'q' 'r' 18 CHECKMULTISIGVERIFY DEPTH 0 EQUAL", true);
+        test_parse_execute("0 0 'a' 'b' 'c' 'd' 'e' 'f' 'g' 'h' 'i' 'j' 'k' 'l' 'm' 'n' 'o' 'p' 'q' 'r' 's' 19 CHECKMULTISIGVERIFY DEPTH 0 EQUAL", true);
+        test_parse_execute("0 0 'a' 'b' 'c' 'd' 'e' 'f' 'g' 'h' 'i' 'j' 'k' 'l' 'm' 'n' 'o' 'p' 'q' 'r' 's' 't' 20 CHECKMULTISIGVERIFY DEPTH 0 EQUAL", true);
     }
 }
