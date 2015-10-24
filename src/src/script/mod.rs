@@ -160,10 +160,19 @@ impl Parser {
         self.get_data(script, number as i32)
     }
 
-    fn to_script_elements(&self, script_: Vec<u8>) -> Result<Vec<Box<ScriptElement>>, String> {
+    fn to_script_elements(&self, script_: Vec<u8>)
+    -> Result<Vec<Box<ScriptElement>>, String> {
         let mut script = script_;
         let mut script_elements: Vec<Box<ScriptElement>> = vec![];
         let len = script.len();
+
+        if script.len() == 0 {
+            // When the script is empty we just return a singleton
+            // with OP_NOP which is equivalent but makes things easier
+            // for us
+            let op_nop = self.op_codes.get(&op_codes::OP_NOP).unwrap();
+            return Ok(vec![Box::new(ScriptElement::new(op_nop, vec![], 0))]);
+        }
 
         script.reverse();
         while script.len() > 0 {
@@ -306,9 +315,35 @@ impl Parser {
         branch
     }
 
-    pub fn execute(&self, input_stack: Vec<Vec<u8>>,
-                   parsed_script: Rc<ScriptElement>,
-                   checksig: fn(usize, &Vec<u8>, &Vec<u8>) -> bool) -> bool {
+    fn no_checksig_allowed(_: usize, _: &Vec<u8>, _: &Vec<u8>) -> bool { false }
+
+    pub fn execute(&self, sig_script_: Vec<u8>, script_pub_key_: Vec<u8>,
+                   checksig: fn(usize, &Vec<u8>, &Vec<u8>) -> bool)
+    -> Result<bool, String> {
+        let sig_script = try!(self.parse(sig_script_));
+        let script_pub_key = try!(self.parse(script_pub_key_));
+
+        // OP_CHECKSIG is not allowed when executing sigScript
+        // TODO: ideally we should just invalidate the context
+        let sig_script_context = try!(self.execute_base(vec![],
+                                                        sig_script,
+                                                        Parser::no_checksig_allowed));
+
+        if !sig_script_context.valid {
+            return Ok(false);
+        }
+
+        let script_pub_key_context = try!(self.execute_base(sig_script_context.stack,
+                                                            script_pub_key, checksig));
+
+        Ok(script_pub_key_context.valid &&
+           op_codes::is_true(&script_pub_key_context.stack.last()))
+    }
+
+    fn execute_base<'a>(&'a self, input_stack: Vec<Vec<u8>>,
+                   parsed_script: Rc<ScriptElement<'a>>,
+                   checksig: fn(usize, &Vec<u8>, &Vec<u8>) -> bool)
+    -> Result<Context, String> {
         let mut context = Context::new(parsed_script, input_stack, checksig);
         let mut done = false;
 
@@ -328,7 +363,7 @@ impl Parser {
             context = new_context;
         }
 
-        return context.valid && op_codes::is_true(&context.stack.last());
+        Ok(context)
     }
 }
 
@@ -468,7 +503,7 @@ mod tests {
             el = e.next.clone();
         }
 
-        assert_eq!(parser.execute(vec![], data.unwrap(), checksig), expected);
+        assert_eq!(parser.execute(vec![], raw_script, checksig).unwrap(), expected);
     }
 
     fn test_parse_execute(script: &str, expected: bool) {

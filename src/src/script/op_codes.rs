@@ -676,9 +676,10 @@ pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 90] = [
     ("NOP10",              0xb9, false, op_nop),
 ];
 
-pub const OP_IF: u8 = 0x63;
+pub const OP_NOP:   u8 = 0x61;
+pub const OP_IF:    u8 = 0x63;
 pub const OP_NOTIF: u8 = 0x64;
-pub const OP_ELSE: u8 = 0x67;
+pub const OP_ELSE:  u8 = 0x67;
 pub const OP_ENDIF: u8 = 0x68;
 
 #[cfg(test)]
