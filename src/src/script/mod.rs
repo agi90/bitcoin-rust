@@ -388,14 +388,16 @@ mod tests {
         }
     }
 
-    fn test_with_checksig(script: &str,
+    fn test_with_checksig(script_sig: &str,
+                          script_pub_key: &str,
                           expected: bool,
                           checksig: fn(usize, &Vec<u8>, &Vec<u8>) -> bool) {
-        print!("\n\n {} [expected={}]\n", script, expected);
+        print!("\n\n {} {} [expected={}]\n", script_sig, script_pub_key, expected);
         let parser = Parser::new();
 
-        let raw_script = parser.preprocess_human_readable(script).unwrap();
-        let data = parser.parse(raw_script.clone());
+        let raw_script_sig = parser.preprocess_human_readable(script_sig).unwrap();
+        let raw_script_pub_key = parser.preprocess_human_readable(script_pub_key).unwrap();
+        let data = parser.parse(raw_script_pub_key.clone());
 
         match &data {
             &Ok(_) => {},
@@ -411,34 +413,35 @@ mod tests {
 
             // Test that the id and the actual position in the script coincide
             // TODO: test both branches of the if.
-            assert_eq!(raw_script[e.id], e.op_code.code);
+            assert_eq!(raw_script_pub_key[e.id], e.op_code.code);
 
             el = e.next.clone();
         }
 
-        assert_eq!(parser.execute(vec![], raw_script, checksig).unwrap(), expected);
+        assert_eq!(parser.execute(raw_script_sig, raw_script_pub_key, checksig).unwrap(),
+                   expected);
     }
 
     fn test_parse_execute(script: &str, expected: bool) {
-        test_with_checksig(script, expected, mock_checksig);
+        test_with_checksig("", script, expected, mock_checksig);
     }
 
     #[test]
     fn test_checksig() {
-        test_with_checksig("1 1 CHECKSIG", true, equal_checksig);
-        test_with_checksig("1 2 CHECKSIG", false, equal_checksig);
-        test_with_checksig("'this_is_my_sig' 'this_is_my_sig' CHECKSIG", true, equal_checksig);
-        test_with_checksig("0 'a' 'b' 2 'c' 'd' 'a' 'b' 4 CHECKMULTISIGVERIFY DEPTH 0 EQUAL",
+        test_with_checksig("", "1 1 CHECKSIG", true, equal_checksig);
+        test_with_checksig("", "1 2 CHECKSIG", false, equal_checksig);
+        test_with_checksig("", "'this_is_my_sig' 'this_is_my_sig' CHECKSIG", true, equal_checksig);
+        test_with_checksig("", "0 'a' 'b' 2 'c' 'd' 'a' 'b' 4 CHECKMULTISIGVERIFY DEPTH 0 EQUAL",
                            true, equal_checksig);
-        test_with_checksig("0 'a' 'b' 2 'c' 'd' 'b' 'a' 4 CHECKMULTISIGVERIFY DEPTH 0 EQUAL",
+        test_with_checksig("", "0 'a' 'b' 2 'c' 'd' 'b' 'a' 4 CHECKMULTISIGVERIFY DEPTH 0 EQUAL",
                            false, equal_checksig);
-        test_with_checksig("0 'a' 1 'b' 1 CHECKMULTISIGVERIFY DEPTH 0 EQUAL",
+        test_with_checksig("", "0 'a' 1 'b' 1 CHECKMULTISIGVERIFY DEPTH 0 EQUAL",
                            false, equal_checksig);
-        test_with_checksig("0 'a' 1 'b' 'c' 2 CHECKMULTISIGVERIFY DEPTH 0 EQUAL",
+        test_with_checksig("", "0 'a' 1 'b' 'c' 2 CHECKMULTISIGVERIFY DEPTH 0 EQUAL",
                            false, equal_checksig);
-        test_with_checksig("0 'a' 1 'b' 'c' 'd' 3 CHECKMULTISIGVERIFY DEPTH 0 EQUAL",
+        test_with_checksig("", "0 'a' 1 'b' 'c' 'd' 3 CHECKMULTISIGVERIFY DEPTH 0 EQUAL",
                            false, equal_checksig);
-        test_with_checksig("0 'a' 1 'b' 'c' 'd' 'a' 4 CHECKMULTISIGVERIFY DEPTH 0 EQUAL",
+        test_with_checksig("", "0 'a' 1 'b' 'c' 'd' 'a' 4 CHECKMULTISIGVERIFY DEPTH 0 EQUAL",
                            true, equal_checksig);
     }
 

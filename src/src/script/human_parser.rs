@@ -75,6 +75,12 @@ impl Parser {
     }
 
     pub fn parse(&self, script: &str) -> Result<Vec<u8>, String> {
+        if script.len() == 0 {
+            // for some reason script.split(" ") on an empty string
+            // returns a singleton with '\n' which doesn't work for us
+            return Ok(vec![]);
+        }
+
         let mut result: Vec<u8> = vec![];
 
         for s in script.split(" ") {
