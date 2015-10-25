@@ -8,6 +8,7 @@ regex = "0.1.41"
 rustc-serialize = "0.3"
 hyper = "0.6.15"
 rust-crypto = "*"
+time = "0.1"
 
 [profile.dev]
 opt-level = 0
