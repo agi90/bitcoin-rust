@@ -486,10 +486,10 @@ pub fn op_if(context: Context) -> Context {
 
     if is_true(&Some(&last)) {
         new_context.data = new_context.data.next.clone().unwrap();
-        new_context.conditional_executed = true;
+        new_context.conditional_executed.push(true);
     } else {
         new_context.data = new_context.data.next_else.clone().unwrap();
-        new_context.conditional_executed = false;
+        new_context.conditional_executed.push(false);
     }
 
     new_context
@@ -498,13 +498,14 @@ pub fn op_if(context: Context) -> Context {
 pub fn op_else(context: Context) -> Context {
     let mut new_context = context;
 
-    if !new_context.conditional_executed {
+    let conditional_executed = new_context.conditional_executed.pop().unwrap();
+    if !conditional_executed {
         new_context.data = new_context.data.next.clone().unwrap();
     } else {
         new_context.data = new_context.data.next_else.clone().unwrap();
     }
 
-    new_context.conditional_executed = !new_context.conditional_executed;
+    new_context.conditional_executed.push(!conditional_executed);
 
     new_context
 }
@@ -515,16 +516,22 @@ pub fn op_notif(context: Context) -> Context {
 
     if !is_true(&Some(&last)) {
         new_context.data = new_context.data.next.clone().unwrap();
-        new_context.conditional_executed = true;
+        new_context.conditional_executed.push(true);
     } else {
         new_context.data = new_context.data.next_else.clone().unwrap();
-        new_context.conditional_executed = false;
+        new_context.conditional_executed.push(false);
     }
 
     new_context
 }
 
-pub fn op_endif(context: Context) -> Context { context }
+pub fn op_endif(context: Context) -> Context {
+    let mut new_context = context;
+
+    new_context.conditional_executed.pop();
+
+    new_context
+}
 
 fn to_bool(element: &Vec<u8>) -> bool {
     if element.len() == 0 {

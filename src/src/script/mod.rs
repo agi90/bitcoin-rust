@@ -17,7 +17,7 @@ pub struct Context<'a> {
     // fn(codeseparator: usize, pub_key_str: Vec<u8>, sig_str: Vec<u8) -> bool
     checksig: fn(usize, &Vec<u8>, &Vec<u8>) -> bool,
     // Whether or not the last OP_IF, OP_ELSE or OP_NOTIF has been executed
-    conditional_executed: bool,
+    conditional_executed: Vec<bool>,
 }
 
 pub struct ScriptElement<'a> {
@@ -45,7 +45,7 @@ impl<'a> Context<'a> {
             altstack: vec![],
             codeseparator: 0,
             checksig: checksig,
-            conditional_executed: false,
+            conditional_executed: vec![],
         }
     }
 }
@@ -444,11 +444,11 @@ mod tests {
     #[test]
     fn test_official_client_compat() {
         let result = official_test::Tester::test(|sig, pub_key, _| {
-            let result = test_base(&sig, &pub_key, true, mock_checksig);
+            let result = test_base(sig, pub_key, true, mock_checksig);
             result.is_ok() && result.unwrap()
         });
 
-        assert_eq!(result, 572);
+        assert_eq!(result, 574);
     }
 
     #[test]

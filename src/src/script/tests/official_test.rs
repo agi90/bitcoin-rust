@@ -8,11 +8,12 @@ pub struct Tester;
 
 impl Tester {
     pub fn test<F> (callback: F) -> i32
-    where F: Fn(String, String, String) -> bool {
+    where F: Fn(&str, &str, &str) -> bool {
         let data = Tester::download_test();
         let json = Tester::get_array(Json::from_str(&data).unwrap());
 
         let mut passed = 0;
+        let mut failed = vec![];
         for test in json {
             let mut test_array = Tester::get_array(test);
             test_array.reverse();
@@ -23,11 +24,18 @@ impl Tester {
                 let script_pub_key = Tester::get_string(test_array.pop().unwrap());
                 // let flags = Tester::get_string(test_array.pop().unwrap());
 
-                if callback(script_sig, script_pub_key, "".to_string()) {
+                if callback(&script_sig, &script_pub_key, "") {
                     passed += 1;
+                } else {
+                    failed.push((script_sig, script_pub_key));
                 }
             }
             print!("passed={}\n", passed);
+        }
+
+        print!("failed tests:\n");
+        for t in failed {
+            print!("sig=`{}`, pub_key=`{}`\n", t.0, t.1);
         }
 
         passed
