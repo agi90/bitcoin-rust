@@ -3,6 +3,8 @@ use time;
 use utils::IntUtils;
 use utils::ParserUtils;
 
+pub mod messages;
+
 #[derive(PartialEq, Debug)]
 pub struct Services {
     node_network: bool
@@ -20,8 +22,8 @@ impl Services {
         IntUtils::to_vec_u8_padded(data)
     }
 
-    pub fn deserialize(data: Vec<u8>) -> Services {
-        let node_network = IntUtils::to_u64(&data) == 1;
+    pub fn deserialize(data: &mut Vec<u8>) -> Services {
+        let node_network = ParserUtils::get_fixed_u64(data) == 1;
         Services::new(node_network)
     }
 }
@@ -49,14 +51,14 @@ impl IPAddress {
         let mut serialized = vec![];
 
         if include_timestamp {
-            serialized.extend(IntUtils::to_vec_u8(
+            serialized.extend(IntUtils::to_vec_u8_padded(
                     self.timestamp.to_timespec().sec).iter().cloned());
         }
 
         serialized.extend(self.services.serialize());
         serialized.extend(self.address.segments().iter().flat_map(
-                |x| IntUtils::u16_to_vec_u8_padded(*x)));
-        serialized.extend(IntUtils::u16_to_vec_u8_padded(self.port));
+                |x| IntUtils::u16_to_be_vec_u8_padded(*x)));
+        serialized.extend(IntUtils::u16_to_be_vec_u8_padded(self.port));
 
         serialized
     }
@@ -71,22 +73,20 @@ impl IPAddress {
                            segments[4], segments[5], segments[6], segments[7])
     }
 
-    pub fn deserialize(data_: Vec<u8>, with_timestamp: bool) -> IPAddress {
-        let mut data = data_;
-        data.reverse();
-
+    pub fn deserialize(data: &mut Vec<u8>, with_timestamp: bool) -> IPAddress {
         let sec = if with_timestamp {
-            ParserUtils::get_fixed_u32(&mut data) as i64
+            // TODO: fix the case when u64 is too big for i64
+            ParserUtils::get_fixed_u64(data) as i64
         } else {
-            time::now().to_timespec().sec
+            0
         };
 
-        let time =     time::at_utc(time::Timespec::new(sec, 0));
-        let services = Services::deserialize(ParserUtils::get_bytes(&mut data, 8));
-        let ip =       IPAddress::get_ip(&mut data);
-        let port =     ParserUtils::get_be_fixed_u16(&mut data);
-
-        IPAddress::new(time, services, ip, port)
+        IPAddress {
+            timestamp: time::at_utc(time::Timespec::new(sec, 0)),
+            services:  Services::deserialize(data),
+            address:   IPAddress::get_ip(data),
+            port:      ParserUtils::get_be_fixed_u16(data),
+        }
     }
 }
 
@@ -105,14 +105,18 @@ mod tests {
             net::Ipv6Addr::new(0, 0, 0, 0, 0, 0xffff, 0x0a00, 0x0001),
             8333);
 
-        assert_eq!(addr.serialize(true),
-               vec![0x4E, 0x61, 0xBC, 0x00,
+        let mut data = addr.serialize(true);
+
+        assert_eq!(data,
+               vec![0x4E, 0x61, 0xBC, 0x00, 0x00, 0x00, 0x00, 0x00,
                     0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF,
                     0x0A, 0x00, 0x00, 0x01, 0x20, 0x8D]);
 
-        let deserialized = IPAddress::deserialize(addr.serialize(true), true);
+        data.reverse();
+        let deserialized = IPAddress::deserialize(&mut data, true);
 
+        assert!(data.len() == 0);
         assert_eq!(deserialized.services, addr.services);
         assert_eq!(deserialized.address,  addr.address);
         assert_eq!(deserialized.port,     addr.port);
@@ -126,13 +130,17 @@ mod tests {
             net::Ipv6Addr::new(0, 0, 0, 0, 0, 0xffff, 0x0a00, 0x0001),
             8333);
 
-        assert_eq!(addr.serialize(false),
+        let mut data = addr.serialize(false);
+
+        assert_eq!(data,
                vec![0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF,
                     0x0A, 0x00, 0x00, 0x01, 0x20, 0x8D]);
 
-        let deserialized = IPAddress::deserialize(addr.serialize(false), false);
+        data.reverse();
+        let deserialized = IPAddress::deserialize(&mut data, false);
 
+        assert!(data.len() == 0);
         assert_eq!(deserialized.services, addr.services);
         assert_eq!(deserialized.address,  addr.address);
         assert_eq!(deserialized.port,     addr.port);

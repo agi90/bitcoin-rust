@@ -1,5 +1,7 @@
 pub struct IntUtils;
 
+use time;
+
 impl IntUtils {
     fn get_bytes(u: u64) -> [u8; 8] {
         [((u & 0x00000000000000ff) / 0x1)               as u8,
@@ -47,8 +49,7 @@ impl IntUtils {
         let (mut response, sign) = IntUtils::get_raw_result(x, padded);
 
         if x != 0 {
-            let value = response.pop().unwrap();
-            response.push(value | sign);
+            response = IntUtils::add_sign(response, sign);
         }
 
         response
@@ -62,9 +63,30 @@ impl IntUtils {
         IntUtils::to_vec_u8_base(x, true)
     }
 
-    pub fn u16_to_vec_u8_padded(x: u16) -> Vec<u8> {
+    pub fn u16_to_be_vec_u8_padded(x: u16) -> Vec<u8> {
         let bytes = IntUtils::get_bytes(x as u64);
         vec![bytes[1], bytes[0]]
+    }
+
+    pub fn u64_to_vec_u8_padded(x: u64) -> Vec<u8> {
+        let bytes = IntUtils::get_bytes(x as u64);
+        vec![bytes[0], bytes[1], bytes[2], bytes[3],
+             bytes[4], bytes[5], bytes[6], bytes[7]]
+    }
+
+    fn add_sign(bytes_: Vec<u8>, sign: u8) -> Vec<u8> {
+        let mut bytes = bytes_;
+        let value = bytes.pop().unwrap();
+        bytes.push(value | sign);
+
+        bytes
+    }
+
+    pub fn i32_to_vec_u8_padded(x: i32) -> Vec<u8> {
+        let (mut bytes, sign) = IntUtils::get_raw_result(x as i64, true);
+        bytes.truncate(4);
+
+        IntUtils::add_sign(bytes, sign)
     }
 
     pub fn to_u64(x: &Vec<u8>) -> u64 {
@@ -78,6 +100,18 @@ impl IntUtils {
         }
 
         result as u64
+    }
+
+    pub fn to_variable_length_int(data: u64) -> Vec<u8> {
+        let bytes = IntUtils::get_bytes(data);
+
+        match data {
+            0x00000...0x0000000fd => vec![bytes[0]],
+            0x000fd...0x000010000 => vec![0xfd, bytes[0], bytes[1]],
+            0x10000...0x100000000 => vec![0xfe, bytes[0], bytes[1], bytes[2], bytes[3]],
+            _                     => vec![0xff, bytes[0], bytes[1], bytes[2], bytes[3],
+                                                bytes[4], bytes[5], bytes[6], bytes[7]],
+        }
     }
 
     pub fn to_u32(x: &Vec<u8>) -> u32 {
@@ -133,11 +167,23 @@ impl ParserUtils {
         IntUtils::to_u64(&bytes)
     }
 
+    pub fn get_fixed_i32(data: &mut Vec<u8>) -> i32 {
+        assert!(data.len() >= 4 as usize);
+
+        IntUtils::to_i32(&ParserUtils::get_bytes(data, 4))
+    }
+
     pub fn get_fixed(data: &mut Vec<u8>, bytes: u8) -> u64 {
         assert!(bytes == 2 || bytes == 4 || bytes == 8);
         assert!(data.len() >= bytes as usize);
 
         IntUtils::to_u64(&ParserUtils::get_bytes(data, bytes as u64))
+    }
+
+    pub fn get_time(data: &mut Vec<u8>) -> time::Tm {
+        // TODO: fix the case when u64 is too big for i64
+        let sec = ParserUtils::get_fixed_u64(data) as i64;
+        time::at_utc(time::Timespec::new(sec, 0))
     }
 
     pub fn get_bytes(data: &mut Vec<u8>, bytes: u64) -> Vec<u8> {
@@ -157,6 +203,24 @@ impl ParserUtils {
 
     pub fn get_fixed_u32(data: &mut Vec<u8>) -> u32 {
         ParserUtils::get_fixed(data, 4) as u32
+    }
+
+    pub fn get_bool(data: &mut Vec<u8>) -> bool {
+        let bytes = ParserUtils::get_bytes(data, 1);
+
+        if bytes[0] == 0 {
+            false
+        } else {
+            true
+        }
+    }
+
+    pub fn get_string(data: &mut Vec<u8>) -> String {
+        let length = ParserUtils::get_variable_length_int(data);
+
+        let bytes = ParserUtils::get_bytes(data, length);
+        // TODO: return error
+        String::from_utf8(bytes).unwrap()
     }
 
     pub fn get_fixed_u64(data: &mut Vec<u8>) -> u64 {
@@ -240,10 +304,20 @@ mod tests {
     }
 
     #[test]
-    fn test_u16_to_vec_u8_padded() {
-        assert_eq!(vec![0x00, 0x00], IntUtils::u16_to_vec_u8_padded(0x0000));
-        assert_eq!(vec![0x00, 0x01], IntUtils::u16_to_vec_u8_padded(0x0001));
-        assert_eq!(vec![0xff, 0xfe], IntUtils::u16_to_vec_u8_padded(0xfffe));
-        assert_eq!(vec![0xff, 0xff], IntUtils::u16_to_vec_u8_padded(0xffff));
+    fn test_i32_to_vec_u8_padded() {
+        assert_eq!(vec![0x00, 0x00, 0x00, 0x00], IntUtils::i32_to_vec_u8_padded(0x0000));
+        assert_eq!(vec![0x01, 0x00, 0x00, 0x00], IntUtils::i32_to_vec_u8_padded(0x0001));
+        assert_eq!(vec![0xfe, 0xff, 0x00, 0x00], IntUtils::i32_to_vec_u8_padded(0xfffe));
+        assert_eq!(vec![0xff, 0xff, 0xff, 0x7f],
+                   IntUtils::i32_to_vec_u8_padded(0x7fffffff));
+        assert_eq!(vec![0x01, 0x00, 0x00, 0x80], IntUtils::i32_to_vec_u8_padded(-0x1));
+    }
+
+    #[test]
+    fn test_u16_to_be_vec_u8_padded() {
+        assert_eq!(vec![0x00, 0x00], IntUtils::u16_to_be_vec_u8_padded(0x0000));
+        assert_eq!(vec![0x00, 0x01], IntUtils::u16_to_be_vec_u8_padded(0x0001));
+        assert_eq!(vec![0xff, 0xfe], IntUtils::u16_to_be_vec_u8_padded(0xfffe));
+        assert_eq!(vec![0xff, 0xff], IntUtils::u16_to_be_vec_u8_padded(0xffff));
     }
 }
