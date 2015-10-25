@@ -6,7 +6,7 @@ authors = ["Giovanni Sferro <agi.novanta@gmail.com>"]
 [dependencies]
 regex = "0.1.41"
 rustc-serialize = "0.3"
-secp256k1 = "0.3.2"
+hyper = "0.6.15"
 rust-crypto = "*"
 
 [profile.dev]

@@ -5,4 +5,5 @@ pub mod transaction;
 extern crate crypto;
 extern crate regex;
 extern crate rustc_serialize;
+extern crate hyper;
 

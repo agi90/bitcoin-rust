@@ -46,7 +46,7 @@ impl Parser {
     }
 
     fn parse_number(&self, token: &str) -> Result<Vec<u8>, String> {
-        let result = token.parse::<i32>().unwrap();
+        let result = token.parse::<i64>().unwrap();
         let mut result_array = IntUtils::to_vec_u8(result);
         let len = result_array.len();
         result_array.insert(0, len as u8);

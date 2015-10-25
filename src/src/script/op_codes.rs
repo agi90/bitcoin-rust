@@ -79,7 +79,7 @@ pub fn op_depth(context: Context) -> Context {
     assert!(context.stack.len() <= 0x7f);
 
     stack_op(context, |st| {
-        let size = IntUtils::to_vec_u8(st.len() as i32);
+        let size = IntUtils::to_vec_u8(st.len() as i64);
         st.push(size);
     })
 }
@@ -194,19 +194,19 @@ pub fn op_2swap(context: Context) -> Context {
 }
 
 pub fn unary_op<F>(context: Context, op: F) -> Context
-where F: Fn(i32) -> i32 {
+where F: Fn(i32) -> i64 {
     assert!(context.stack.len() > 0);
 
     stack_op(context, |st| {
         let input = IntUtils::to_i32(&st.pop().unwrap());
-        st.push(IntUtils::to_vec_u8(op(input)));
+        st.push(IntUtils::to_vec_u8(op(input) as i64));
     })
 }
 
-pub fn op_1add(context: Context)   -> Context { unary_op(context, |a| a + 1) }
-pub fn op_1sub(context: Context)   -> Context { unary_op(context, |a| a - 1) }
-pub fn op_negate(context: Context) -> Context { unary_op(context, |a| a * -1) }
-pub fn op_abs(context: Context)    -> Context { unary_op(context, |a| a.abs()) }
+pub fn op_1add(context: Context)   -> Context { unary_op(context, |a| a as i64 + 1 ) }
+pub fn op_1sub(context: Context)   -> Context { unary_op(context, |a| a as i64 - 1) }
+pub fn op_negate(context: Context) -> Context { unary_op(context, |a| a as i64 * -1) }
+pub fn op_abs(context: Context)    -> Context { unary_op(context, |a| a.abs() as i64) }
 pub fn op_not(context: Context) -> Context {
     unary_op(context, |a| if a == 0 { 1 } else { 0 })
 }
@@ -216,7 +216,7 @@ pub fn op_0notequal(context: Context) -> Context {
 }
 
 pub fn binary_op<F>(context: Context, op: F) -> Context
-where F: Fn(i32, i32) -> i32 {
+where F: Fn(i32, i32) -> i64 {
     assert!(context.stack.len() >= 2);
 
     stack_op(context, |st| {
@@ -231,8 +231,8 @@ where F: Fn(i32, i32) -> bool {
     binary_op(context, |a, b| if op(a, b) { 1 } else { 0 })
 }
 
-pub fn op_add(context: Context) -> Context { binary_op(context, |a, b| a + b) }
-pub fn op_sub(context: Context) -> Context { binary_op(context, |a, b| a - b) }
+pub fn op_add(context: Context) -> Context { binary_op(context, |a, b| a as i64 + b as i64) }
+pub fn op_sub(context: Context) -> Context { binary_op(context, |a, b| a as i64 - b as i64) }
 
 pub fn op_booland(context: Context) -> Context {
     bool_binary_op(context, |a, b| a != 0 && b != 0)
@@ -271,11 +271,11 @@ pub fn op_greaterthanorequal(context: Context) -> Context {
 }
 
 pub fn op_min(context: Context) -> Context {
-    binary_op(context, |a, b| cmp::min(a,b))
+    binary_op(context, |a, b| cmp::min(a,b) as i64)
 }
 
 pub fn op_max(context: Context) -> Context {
-    binary_op(context, |a, b| cmp::max(a,b))
+    binary_op(context, |a, b| cmp::max(a,b) as i64)
 }
 
 pub fn ternary_op<F>(context: Context, op: F) -> Context
@@ -286,7 +286,7 @@ where F: Fn(i32, i32, i32) -> i32 {
         let input1 = IntUtils::to_i32(&st.pop().unwrap());
         let input2 = IntUtils::to_i32(&st.pop().unwrap());
         let input3 = IntUtils::to_i32(&st.pop().unwrap());
-        st.push(IntUtils::to_vec_u8(op(input3, input2, input1)));
+        st.push(IntUtils::to_vec_u8(op(input3, input2, input1) as i64));
     })
 }
 
@@ -486,9 +486,25 @@ pub fn op_if(context: Context) -> Context {
 
     if is_true(&Some(&last)) {
         new_context.data = new_context.data.next.clone().unwrap();
+        new_context.conditional_executed = true;
+    } else {
+        new_context.data = new_context.data.next_else.clone().unwrap();
+        new_context.conditional_executed = false;
+    }
+
+    new_context
+}
+
+pub fn op_else(context: Context) -> Context {
+    let mut new_context = context;
+
+    if !new_context.conditional_executed {
+        new_context.data = new_context.data.next.clone().unwrap();
     } else {
         new_context.data = new_context.data.next_else.clone().unwrap();
     }
+
+    new_context.conditional_executed = !new_context.conditional_executed;
 
     new_context
 }
@@ -499,8 +515,10 @@ pub fn op_notif(context: Context) -> Context {
 
     if !is_true(&Some(&last)) {
         new_context.data = new_context.data.next.clone().unwrap();
+        new_context.conditional_executed = true;
     } else {
         new_context.data = new_context.data.next_else.clone().unwrap();
+        new_context.conditional_executed = false;
     }
 
     new_context
@@ -550,13 +568,9 @@ pub fn op_size(context: Context) -> Context {
     assert!(context.stack.len() > 0);
 
     stack_op(context, |st| {
-        let size = IntUtils::to_vec_u8(st.last().unwrap().len() as i32);
+        let size = IntUtils::to_vec_u8(st.last().unwrap().len() as i64);
         st.push(size);
     })
-}
-
-pub fn op_unreachable(_: Context) -> Context {
-    unimplemented!()
 }
 
 impl cmp::PartialEq for OpCode {
@@ -573,8 +587,8 @@ impl fmt::Debug for OpCode {
 
 impl<'a> fmt::Debug for Context<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Context(data={:?}, stack={:?}, valid={:?})",
-               self.data, self.stack, self.valid)
+        write!(f, "Context(data={:?}, stack={:?}, valid={:?}, branch_executed={:?})",
+               self.data, self.stack, self.valid, self.conditional_executed)
     }
 }
 
@@ -584,6 +598,9 @@ impl<'a> cmp::PartialEq for Context<'a> {
             self.valid == other.valid
     }
 }
+
+pub const OP_INVALID : (&'static str, u8, bool, fn(Context) -> Context) =
+    ("INVALID",      0xba, false, op_mark_invalid);
 
 pub const OP_PUSHDATA : (&'static str, u8, bool, fn(Context) -> Context) =
     ("PUSHDATA",     0x01, false, op_pushdata);
@@ -617,7 +634,7 @@ pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 94] = [
     ("IF",                 0x63, true,  op_if),
     ("NOTIF",              0x64, true,  op_notif),
     // TODO: opcodes 0x65 - 0x66 (reserved opcodes)
-    ("ELSE",               0x67, false, op_unreachable),
+    ("ELSE",               0x67, true,  op_else),
     ("ENDIF",              0x68, false, op_endif),
     ("VERIFY",             0x69, false, op_verify),
     ("RETURN",             0x6a, false, op_mark_invalid),
@@ -689,6 +706,7 @@ pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 94] = [
     ("NOP8",               0xb7, false, op_nop),
     ("NOP9",               0xb8, false, op_nop),
     ("NOP10",              0xb9, false, op_nop),
+    // invalid opcodes 0xba - 0xff
 ];
 
 pub const OP_NOP:   u8 = 0x61;

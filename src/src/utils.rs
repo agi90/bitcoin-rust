@@ -1,14 +1,18 @@
 pub struct IntUtils;
 
 impl IntUtils {
-    pub fn to_vec_u8(x: i32) -> Vec<u8> {
+    pub fn to_vec_u8(x: i64) -> Vec<u8> {
         let u = x.abs();
         let sign: u8 = if u == x { 0x00 } else { 0x80 };
 
-        let byte0 = (u  & 0x000000ff)              as u8;
-        let byte1 = ((u & 0x0000ff00) / 0x100)     as u8;
-        let byte2 = ((u & 0x00ff0000) / 0x10000)   as u8;
-        let byte3 = ((u & 0x7f000000) / 0x1000000) as u8;
+        let byte0 = ((u & 0x00000000000000ff) / 0x1)               as u8;
+        let byte1 = ((u & 0x000000000000ff00) / 0x100)             as u8;
+        let byte2 = ((u & 0x0000000000ff0000) / 0x10000)           as u8;
+        let byte3 = ((u & 0x00000000ff000000) / 0x1000000)         as u8;
+        let byte4 = ((u & 0x000000ff00000000) / 0x100000000)       as u8;
+        let byte5 = ((u & 0x0000ff0000000000) / 0x10000000000)     as u8;
+        let byte6 = ((u & 0x00ff000000000000) / 0x1000000000000)   as u8;
+        let byte7 = ((u & 0x7f00000000000000) / 0x100000000000000) as u8;
 
         if u == 0 {
             vec![]
@@ -18,8 +22,16 @@ impl IntUtils {
             vec![byte0, byte1 | sign]
         } else if u <= 0x7fffff {
             vec![byte0, byte1, byte2 | sign]
-        } else {
+        } else if u <= 0x7fffffff {
             vec![byte0, byte1, byte2, byte3 | sign]
+        } else if u <= 0x7fffffffff {
+            vec![byte0, byte1, byte2, byte3, byte4 | sign]
+        } else if u <= 0x7fffffffffff {
+            vec![byte0, byte1, byte2, byte3, byte4, byte5 | sign]
+        } else if u <= 0x7fffffffffffff {
+            vec![byte0, byte1, byte2, byte3, byte4, byte5, byte6 | sign]
+        } else {
+            vec![byte0, byte1, byte2, byte3, byte4, byte5, byte6, byte7 | sign]
         }
     }
 
