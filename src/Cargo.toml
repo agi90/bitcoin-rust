@@ -6,9 +6,18 @@ authors = ["Giovanni Sferro <agi.novanta@gmail.com>"]
 [dependencies]
 regex = "0.1.41"
 rustc-serialize = "0.3"
+secp256k1 = "0.3.2"
 rust-crypto = "*"
 
 [profile.dev]
+opt-level = 0
+debug = true
+rpath = false
+lto = false
+debug-assertions = true
+codegen-units = 1
+
+[profile.test]
 opt-level = 0
 debug = true
 rpath = false
