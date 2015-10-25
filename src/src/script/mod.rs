@@ -334,7 +334,6 @@ impl Parser {
         let mut done = false;
 
         while !done && context.valid {
-            print!("context={:?}\n", context);
             let ref advancing = context.data.op_code.advancing;
             let ref parser = context.data.op_code.parser;
 
@@ -448,7 +447,7 @@ mod tests {
             result.is_ok() && result.unwrap()
         });
 
-        assert_eq!(result, 574);
+        assert_eq!(result, 576);
     }
 
     #[test]

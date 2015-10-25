@@ -2,6 +2,7 @@ use regex::Regex;
 use rustc_serialize::hex::FromHex;
 
 use std::collections::HashMap;
+use std::cmp;
 
 use super::Context;
 use utils::IntUtils;
@@ -54,16 +55,23 @@ impl Parser {
     }
 
     fn parse_string_literal(&self, token: &str) -> Result<Vec<u8>, String> {
-        if token.len() > 75 {
-            return Err(format!(
-                    "The literal `{}` is too long, the maximum length allowed is 75.",
-                    token));
-        }
-
+        let mut start = 0;
         let mut result_array = Vec::new();
 
-        result_array.push(token.len() as u8);
-        result_array.extend(token.as_bytes().iter().cloned());
+        loop {
+            let end = cmp::min(start + 75, token.len());
+
+            let slice = &token[start..end];
+            result_array.push(slice.len() as u8);
+            result_array.extend(slice.as_bytes().iter().cloned());
+
+            if end >= token.len() {
+                break;
+            }
+
+            start = end;
+        }
+
         return Ok(result_array);
     }
 
