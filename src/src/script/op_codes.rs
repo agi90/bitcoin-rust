@@ -508,9 +508,23 @@ pub fn op_notif(context: Context) -> Context {
 
 pub fn op_endif(context: Context) -> Context { context }
 
+fn to_bool(element: &Vec<u8>) -> bool {
+    if element.len() == 0 {
+        return false;
+    }
+
+    for i in 0..element.len()-1 {
+        if *element.get(i).unwrap() != 0x00 {
+            return true;
+        }
+    }
+
+    return *element.last().unwrap() != 0x80;
+}
+
 pub fn is_true(element: &Option<&Vec<u8>>) -> bool {
     match element {
-        &Some(x) => IntUtils::to_i32(x) != 0,
+        &Some(x) => to_bool(x),
         &None => false,
     }
 }
@@ -524,7 +538,7 @@ pub fn op_verify(context: Context) -> Context {
     return new_context;
 }
 
-pub fn op_return(context: Context) -> Context {
+pub fn op_mark_invalid(context: Context) -> Context {
     let mut new_context = context;
 
     new_context.valid = false;
@@ -574,14 +588,14 @@ impl<'a> cmp::PartialEq for Context<'a> {
 pub const OP_PUSHDATA : (&'static str, u8, bool, fn(Context) -> Context) =
     ("PUSHDATA",     0x01, false, op_pushdata);
 
-pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 90] = [
+pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 94] = [
     ("0",                  0x00, false, op_false),
     // opcodes 0x02 - 0x4b op_pushdata
     ("PUSHDATA1",          0x4c, false, op_pushdata),
     ("PUSHDATA2",          0x4d, false, op_pushdata),
     ("PUSHDATA4",          0x4e, false, op_pushdata),
     ("1NEGATE",            0x4f, false, op_1negate),
-    // TODO: opcode 0x50 (reserved opcode)
+    ("RESERVED",           0x50, false, op_mark_invalid),
     ("1",                  0x51, false, op_1),
     ("2",                  0x52, false, op_2),
     ("3",                  0x53, false, op_3),
@@ -599,14 +613,14 @@ pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 90] = [
     ("15",                 0x5f, false, op_15),
     ("16",                 0x60, false, op_16),
     ("NOP",                0x61, false, op_nop),
-    // TODO: opcode 0x62 (reserved opcode)
+    ("VER",                0x62, false, op_mark_invalid),
     ("IF",                 0x63, true,  op_if),
     ("NOTIF",              0x64, true,  op_notif),
     // TODO: opcodes 0x65 - 0x66 (reserved opcodes)
     ("ELSE",               0x67, false, op_unreachable),
     ("ENDIF",              0x68, false, op_endif),
     ("VERIFY",             0x69, false, op_verify),
-    ("RETURN",             0x6a, false, op_return),
+    ("RETURN",             0x6a, false, op_mark_invalid),
     ("TOALTSTACK",         0x6b, false, op_toaltstack),
     ("FROMALTSTACK",       0x6c, false, op_fromaltstack),
     ("2DROP",              0x6d, false, op_2drop),
@@ -631,7 +645,8 @@ pub const OP_CODES : [(&'static str, u8, bool, fn(Context) -> Context); 90] = [
     // opcodes 0x83 - 0x86 (disabled opcodes)
     ("EQUAL",              0x87, false, op_equal),
     ("EQUALVERIFY",        0x88, false, op_equalverify),
-    // TODO: opcodes 0x89 - 0x8a (reserved opcodes)
+    ("RESERVED1",          0x89, false, op_mark_invalid),
+    ("RESERVED2",          0x8a, false, op_mark_invalid),
     ("1ADD",               0x8b, false, op_1add),
     ("1SUB",               0x8c, false, op_1sub),
     // opcodes 0x8d - 0x8e (disabled opcodes)
@@ -899,14 +914,6 @@ mod tests {
         test_op_verify(vec![vec![ZERO, ZERO]], true);
         test_op_verify(vec![vec![ZERO, 0x81]], true);
         test_op_verify(vec![vec![0x01, 0x81]], true);
-    }
-
-    #[test]
-    fn test_op_return() {
-        let context = get_context(vec![]);
-        let output = op_verify(context);
-
-        assert!(!output.valid);
     }
 
     #[test]
