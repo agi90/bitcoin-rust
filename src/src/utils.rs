@@ -1,3 +1,9 @@
+
+use crypto::digest::Digest;
+use crypto::sha1;
+use crypto::sha2;
+use crypto::ripemd160;
+
 pub struct IntUtils;
 
 use time;
@@ -66,6 +72,11 @@ impl IntUtils {
     pub fn u16_to_be_vec_u8_padded(x: u16) -> Vec<u8> {
         let bytes = IntUtils::get_bytes(x as u64);
         vec![bytes[1], bytes[0]]
+    }
+
+    pub fn u32_to_vec_u8_padded(x: u32) -> Vec<u8> {
+        let bytes = IntUtils::get_bytes(x as u64);
+        vec![bytes[0], bytes[1], bytes[2], bytes[3]]
     }
 
     pub fn u64_to_vec_u8_padded(x: u64) -> Vec<u8> {
@@ -215,12 +226,15 @@ impl ParserUtils {
         }
     }
 
-    pub fn get_string(data: &mut Vec<u8>) -> String {
-        let length = ParserUtils::get_variable_length_int(data);
-
+    pub fn get_fixed_string(data: &mut Vec<u8>, length: u64) -> String {
         let bytes = ParserUtils::get_bytes(data, length);
         // TODO: return error
         String::from_utf8(bytes).unwrap()
+    }
+
+    pub fn get_string(data: &mut Vec<u8>) -> String {
+        let length = ParserUtils::get_variable_length_int(data);
+        ParserUtils::get_fixed_string(data, length)
     }
 
     pub fn get_fixed_u64(data: &mut Vec<u8>) -> u64 {
@@ -245,9 +259,53 @@ impl ParserUtils {
     }
 }
 
+pub struct CryptoUtils;
+
+impl CryptoUtils {
+    pub fn ripemd160(input: Vec<u8>) -> Vec<u8> {
+        let mut ripemd160 = ripemd160::Ripemd160::new();
+        ripemd160.input(&input[..]);
+
+        let mut result = [0u8;20];
+        ripemd160.result(&mut result[0..20]);
+
+        let mut result_array = Vec::new();
+        result_array.extend(result.iter().cloned());
+
+        result_array
+    }
+
+    pub fn sha1(input: Vec<u8>) -> Vec<u8> {
+        let mut sha1 = sha1::Sha1::new();
+        sha1.input(&input[..]);
+
+        let mut result = [0u8;20];
+        sha1.result(&mut result[0..20]);
+
+        let mut result_array = Vec::new();
+        result_array.extend(result.iter().cloned());
+
+        result_array
+    }
+
+    pub fn sha256(input: Vec<u8>) -> Vec<u8> {
+        let mut sha256 = sha2::Sha256::new();
+        sha256.input(&input[..]);
+
+        let mut result = [0u8;32];
+        sha256.result(&mut result[0..32]);
+
+        let mut result_array = Vec::new();
+        result_array.extend(result.iter().cloned());
+
+        result_array
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rustc_serialize::base64::FromBase64;
 
     #[test]
     fn test_to_i32() {
@@ -319,5 +377,24 @@ mod tests {
         assert_eq!(vec![0x00, 0x01], IntUtils::u16_to_be_vec_u8_padded(0x0001));
         assert_eq!(vec![0xff, 0xfe], IntUtils::u16_to_be_vec_u8_padded(0xfffe));
         assert_eq!(vec![0xff, 0xff], IntUtils::u16_to_be_vec_u8_padded(0xffff));
+    }
+
+    fn test_hash(hash: &Fn(Vec<u8>) -> Vec<u8>, input: &str, expected: &str) {
+        let output = hash(input.from_base64().unwrap());
+        assert_eq!(output, expected.from_base64().unwrap());
+    }
+
+    #[test]
+    fn test_ripemd160() {
+        test_hash(&CryptoUtils::ripemd160, "MQ==", "xHkHq9KoBJLKk4iwXA44JRj/OWA=");
+        test_hash(&CryptoUtils::ripemd160, "dGVzdA==", "XlL+5H5rBwVl90NyRozcaZ3okQc=");
+        test_hash(&CryptoUtils::ripemd160, "dGVzdF8y", "rwwVga+QLGzlz74RtoOwUT/L6Bw=");
+    }
+
+    #[test]
+    fn test_sha256() {
+        test_hash(&CryptoUtils::sha256, "MQ==", "a4ayc/80/OGda4BO/1o/V0etpOqiLx1JwB5S3beHW0s=");
+        test_hash(&CryptoUtils::sha256, "dGVzdA==", "n4bQgYhMfWWaL+qgxVrQFaO/TxsrC4Is0V1sFbDwCgg=");
+        test_hash(&CryptoUtils::sha256, "dGVzdF8y", "oQnb2DKAEyn4QJvuKEUCStTOqfAz+lwr0XfG/T54ZYc=");
     }
 }

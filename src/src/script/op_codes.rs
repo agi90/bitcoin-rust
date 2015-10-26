@@ -1,56 +1,11 @@
-extern crate rustc_serialize;
-
 use super::Context;
 use super::OpCode;
 
 use utils::IntUtils;
-
-use crypto::sha1;
-use crypto::sha2;
-use crypto::ripemd160;
-use crypto::digest::Digest;
+use utils::CryptoUtils;
 
 use std::fmt;
 use std::cmp;
-
-fn ripemd160(input: Vec<u8>) -> Vec<u8> {
-    let mut ripemd160 = ripemd160::Ripemd160::new();
-    ripemd160.input(&input[..]);
-
-    let mut result = [0u8;20];
-    ripemd160.result(&mut result[0..20]);
-
-    let mut result_array = Vec::new();
-    result_array.extend(result.iter().cloned());
-
-    result_array
-}
-
-fn sha1(input: Vec<u8>) -> Vec<u8> {
-    let mut sha1 = sha1::Sha1::new();
-    sha1.input(&input[..]);
-
-    let mut result = [0u8;20];
-    sha1.result(&mut result[0..20]);
-
-    let mut result_array = Vec::new();
-    result_array.extend(result.iter().cloned());
-
-    result_array
-}
-
-fn sha256(input: Vec<u8>) -> Vec<u8> {
-    let mut sha256 = sha2::Sha256::new();
-    sha256.input(&input[..]);
-
-    let mut result = [0u8;32];
-    sha256.result(&mut result[0..32]);
-
-    let mut result_array = Vec::new();
-    result_array.extend(result.iter().cloned());
-
-    result_array
-}
 
 pub fn op_dup(context: Context) -> Context {
     pick(context, 0)
@@ -302,28 +257,28 @@ pub fn op_within(context: Context) -> Context {
 pub fn op_sha256(context: Context) -> Context {
     stack_op(context, |st| {
         let last = st.pop().unwrap();
-        st.push(sha256(last));
+        st.push(CryptoUtils::sha256(last));
     })
 }
 
 pub fn op_sha1(context: Context) -> Context {
     stack_op(context, |st| {
         let last = st.pop().unwrap();
-        st.push(sha1(last));
+        st.push(CryptoUtils::sha1(last));
     })
 }
 
 pub fn op_hash256(context: Context) -> Context {
     stack_op(context, |st| {
         let last = st.pop().unwrap();
-        st.push(sha256(sha256(last)));
+        st.push(CryptoUtils::sha256(CryptoUtils::sha256(last)));
     })
 }
 
 pub fn op_ripemd160(context: Context) -> Context {
     stack_op(context, |st| {
         let last = st.pop().unwrap();
-        st.push(ripemd160(last));
+        st.push(CryptoUtils::ripemd160(last));
     })
 }
 
@@ -422,7 +377,7 @@ pub fn op_checkmultisigverify(context: Context) -> Context {
 pub fn op_hash160(context: Context) -> Context {
     stack_op(context, |st| {
         let last = st.pop().unwrap();
-        st.push(ripemd160(sha256(last)));
+        st.push(CryptoUtils::ripemd160(CryptoUtils::sha256(last)));
     })
 }
 
@@ -725,16 +680,14 @@ pub const OP_ENDIF: u8 = 0x68;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::ripemd160;
-    use super::sha256;
 
     use super::super::Context;
     use super::super::ScriptElement;
     use super::super::OpCode;
 
     use std::rc::Rc;
-    use rustc_serialize::base64::FromBase64;
 
+    use rustc_serialize::base64::FromBase64;
     const ZERO : u8 = 0x80;
 
     fn mock_checksig(_: usize, _: &Vec<u8>, _: &Vec<u8>) -> bool { true }
@@ -745,25 +698,6 @@ mod tests {
         advancing: false,
         parser: op_nop
     };
-
-    fn test_hash(hash: &Fn(Vec<u8>) -> Vec<u8>, input: &str, expected: &str) {
-        let output = hash(input.from_base64().unwrap());
-        assert_eq!(output, expected.from_base64().unwrap());
-    }
-
-    #[test]
-    fn test_ripemd160() {
-        test_hash(&ripemd160, "MQ==", "xHkHq9KoBJLKk4iwXA44JRj/OWA=");
-        test_hash(&ripemd160, "dGVzdA==", "XlL+5H5rBwVl90NyRozcaZ3okQc=");
-        test_hash(&ripemd160, "dGVzdF8y", "rwwVga+QLGzlz74RtoOwUT/L6Bw=");
-    }
-
-    #[test]
-    fn test_sha256() {
-        test_hash(&sha256, "MQ==", "a4ayc/80/OGda4BO/1o/V0etpOqiLx1JwB5S3beHW0s=");
-        test_hash(&sha256, "dGVzdA==", "n4bQgYhMfWWaL+qgxVrQFaO/TxsrC4Is0V1sFbDwCgg=");
-        test_hash(&sha256, "dGVzdF8y", "oQnb2DKAEyn4QJvuKEUCStTOqfAz+lwr0XfG/T54ZYc=");
-    }
 
     fn get_context<'a>(stack: Vec<Vec<u8>>) -> Context<'a> {
         let op_code = &TEST_OP_CODE;
