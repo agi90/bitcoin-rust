@@ -3,9 +3,11 @@ use time;
 use utils::IntUtils;
 use utils::ParserUtils;
 
+mod rpcengine;
 pub mod messages;
+pub mod p2pclient;
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Copy, Clone, Debug)]
 pub struct Services {
     node_network: bool
 }
@@ -28,11 +30,11 @@ impl Services {
     }
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone, Copy)]
 pub struct IPAddress {
     timestamp: time::Tm,
     services: Services,
-    address: net::Ipv6Addr,
+    pub address: net::Ipv6Addr,
     port: u16,
 }
 
@@ -51,8 +53,7 @@ impl IPAddress {
         let mut serialized = vec![];
 
         if include_timestamp {
-            serialized.extend(IntUtils::to_vec_u8_padded(
-                    self.timestamp.to_timespec().sec).iter().cloned());
+            serialized.extend(ParserUtils::serialize_time(self.timestamp));
         }
 
         serialized.extend(self.services.serialize());

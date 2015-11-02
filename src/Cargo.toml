@@ -9,6 +9,8 @@ rustc-serialize = "0.3"
 hyper = "0.6.15"
 rust-crypto = "*"
 time = "0.1"
+mio = "0.4"
+bytes = "0.2.11"
 
 [profile.dev]
 opt-level = 0

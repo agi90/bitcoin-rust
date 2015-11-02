@@ -197,6 +197,10 @@ impl ParserUtils {
         time::at_utc(time::Timespec::new(sec, 0))
     }
 
+    pub fn serialize_time(timestamp: time::Tm) -> Vec<u8> {
+        IntUtils::to_vec_u8_padded(timestamp.to_timespec().sec)
+    }
+
     pub fn get_bytes(data: &mut Vec<u8>, bytes: u64) -> Vec<u8> {
         assert!(data.len() >= bytes as usize);
         let mut bytes_data = vec![];
