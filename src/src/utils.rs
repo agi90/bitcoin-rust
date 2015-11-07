@@ -236,6 +236,16 @@ impl ParserUtils {
         String::from_utf8(bytes).unwrap()
     }
 
+    pub fn to_string(data: &str) -> Vec<u8> {
+        let length = data.len() as u64;
+
+        let mut result = vec![];
+        result.extend(IntUtils::u64_to_vec_u8_padded(length));
+        result.extend(data.as_bytes().iter().cloned());
+
+        result
+    }
+
     pub fn get_string(data: &mut Vec<u8>) -> String {
         let length = ParserUtils::get_variable_length_int(data);
         ParserUtils::get_fixed_string(data, length)

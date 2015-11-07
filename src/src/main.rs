@@ -12,5 +12,5 @@ extern crate mio;
 extern crate bytes;
 
 pub fn main() {
-        net::p2pclient::start("0.0.0.0:18333".parse().unwrap());
+        net::p2pclient::start("0.0.0.0:18334".parse().unwrap());
 }

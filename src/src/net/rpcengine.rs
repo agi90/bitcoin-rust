@@ -9,12 +9,13 @@ use bytes::Buf;
 use std::mem;
 use std::io::Cursor;
 use super::messages;
-use std::collections::VecDeque;
+use std::collections::{VecDeque, HashMap};
 
 pub const SERVER: mio::Token = mio::Token(0);
 
 pub trait MessageHandler {
-    fn handle(&mut self, message: Vec<u8>) -> VecDeque<Vec<u8>>;
+    fn handle(&mut self, token: mio::Token, message: Vec<u8>) -> VecDeque<Vec<u8>>;
+    fn get_new_messages(&mut self) -> HashMap<mio::Token, Vec<Vec<u8>>>;
 }
 
 pub struct RPCEngine {
@@ -33,6 +34,15 @@ impl RPCEngine {
             connections: slab,
             handler: handler,
         }
+    }
+
+    fn handle_rpc(&mut self, event_loop: &mut mio::EventLoop<RPCEngine>,
+                  token: mio::Token, rpc: Vec<u8>) {
+        let response: Vec<u8> = self.handler.handle(token, rpc)
+            .into_iter().flat_map(|l| l.into_iter())
+            .collect();
+
+        self.connections[token].push_message(event_loop, response);
     }
 }
 
@@ -75,9 +85,11 @@ impl mio::Handler for RPCEngine {
                 }
             }
             _ => {
-                self.connections[token].ready(event_loop, events, &mut *self.handler);
+                let rpc = self.connections[token].ready(event_loop, events);
                 if self.connections[token].is_closed() {
                     let _ = self.connections.remove(token);
+                } else if rpc.len() > 0 {
+                    self.handle_rpc(event_loop, token, rpc);
                 }
             }
         }
@@ -100,37 +112,51 @@ impl Connection {
         }
     }
 
+    fn push_message(&mut self, event_loop: &mut mio::EventLoop<RPCEngine>, message: Vec<u8>) {
+        self.state.push_message(message);
+        self.reregister(event_loop);
+    }
+
     fn ready(&mut self, event_loop: &mut mio::EventLoop<RPCEngine>,
-             events: mio::EventSet, handler: &mut MessageHandler) {
+             events: mio::EventSet) -> Vec<u8> {
         match self.state.connection_state() {
             &ConnectionState::Reading(..) => {
                 assert!(events.is_readable(), "unexpected events; events={:?}", events);
-                self.read(event_loop, handler)
+                self.read(event_loop)
             }
             &ConnectionState::Writing(..) => {
                 assert!(events.is_writable(), "unexpected events; events={:?}", events);
-                self.write(event_loop, handler)
+                self.write(event_loop)
             }
             _ => unimplemented!(),
         }
     }
 
-    fn read(&mut self, event_loop: &mut mio::EventLoop<RPCEngine>,
-            handler: &mut MessageHandler) {
+    fn read(&mut self, event_loop: &mut mio::EventLoop<RPCEngine>) -> Vec<u8> {
         match self.socket.try_read_buf(self.state.mut_read_buf()) {
             Ok(Some(0)) => {
                 // The client has closed the read socket, for now
                 // we just shutdown the connection
                 self.state.close();
+                vec![]
             }
             Ok(Some(n)) => {
                 println!("read {} bytes", n);
-                if self.state.try_executing_rpc(handler).is_ok() {
-                    self.reregister(event_loop);
+                match self.state.try_get_rpc() {
+                    Ok(x) => {
+                        self.state.try_transition_to_writing();
+                        self.reregister(event_loop);
+                        x
+                    },
+                    Err(x) => {
+                        println!("Error: {}", x);
+                        vec![]
+                    }
                 }
             }
             Ok(None) => {
                 self.reregister(event_loop);
+                vec![]
             }
             Err(e) => {
                 panic!("got an error trying to read; err={:?}", e);
@@ -138,16 +164,17 @@ impl Connection {
         }
     }
 
-    fn write(&mut self, event_loop: &mut mio::EventLoop<RPCEngine>,
-             handler: &mut MessageHandler) {
+    fn write(&mut self, event_loop: &mut mio::EventLoop<RPCEngine>) -> Vec<u8> {
         // TODO: handle error
         match self.socket.try_write_buf(self.state.mut_write_buf()) {
             Ok(Some(_)) => {
-                self.state.try_transition_to_reading(handler);
+                let result = self.state.try_transition_to_reading();
                 self.reregister(event_loop);
+                result
             }
             Ok(None) => {
                 self.reregister(event_loop);
+                vec![]
             }
             Err(e) => {
                 panic!("got an error trying to write; err={:?}", e);
@@ -202,12 +229,24 @@ impl State {
 
     pub fn connection_state(&self) -> &ConnectionState { &self.connection_state }
 
-    fn try_executing_rpc(&mut self, handler: &mut MessageHandler) -> Result<(), String> {
+    pub fn push_message(&mut self, message: Vec<u8>) {
+        let pos = self.writing_buf.position();
+        let mut writing_buf = mem::replace(&mut self.writing_buf, Cursor::new(vec![]))
+            .into_inner();
+
+        writing_buf.split_off(pos as usize);
+        writing_buf.extend(message.into_iter());
+
+        self.writing_buf = Cursor::new(writing_buf);
+        self.try_transition_to_writing();
+    }
+
+    fn try_get_rpc(&mut self) -> Result<Vec<u8>, String> {
         // TODO: handle this assert closing the connection
         // TODO: handle different networks
         // The input is too small to contain the header, let's wait
         if self.reading_buf.len() < 24 {
-            return Ok(());
+            return Ok(vec![]);
         }
 
         // TODO: accept [u8] in deserialize functions
@@ -221,21 +260,14 @@ impl State {
 
         // The input doesn't have the full message, let's wait
         if self.reading_buf.len() < 24 + header.len() as usize {
-            return Ok(());
+            return Ok(vec![]);
         }
 
         let mut reading_buf = mem::replace(&mut self.reading_buf, vec![]);
         let remaining = reading_buf.split_off(24 + header.len() as usize);
 
-        let response: Vec<u8> = handler.handle(reading_buf)
-            .into_iter().flat_map(|l| l.into_iter())
-            .collect();
-
-        self.connection_state = ConnectionState::Writing;
-        self.writing_buf = Cursor::new(response);
         self.reading_buf = remaining;
-
-        Ok(())
+        Ok(reading_buf)
     }
 
     pub fn mut_read_buf(&mut self) -> &mut Vec<u8> {
@@ -250,14 +282,28 @@ impl State {
         &mut self.writing_buf
     }
 
-    fn try_transition_to_reading(&mut self, handler: &mut MessageHandler) {
+    fn try_transition_to_writing(&mut self) {
+        println!("Try transitioning to writing");
+        if self.writing_buf.has_remaining() {
+            self.connection_state = ConnectionState::Writing;
+        }
+    }
+
+    fn try_transition_to_reading(&mut self) -> Vec<u8> {
+        println!("Try transitioning to reading");
         if !self.writing_buf.has_remaining() {
             self.connection_state = ConnectionState::Reading;
 
             // There could be an RPC waiting for us already
-            match self.try_executing_rpc(handler) {
-                _ => {}
+            match self.try_get_rpc() {
+                Ok(x) => x,
+                Err(x) => {
+                    println!("Error: {}", x);
+                    vec![]
+                }
             }
+        } else {
+            vec![]
         }
     }
 }

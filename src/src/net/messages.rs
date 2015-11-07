@@ -26,6 +26,7 @@ pub enum Command {
     Verack,
     Ping,
     Pong,
+    Reject,
 }
 
 impl Serializable for Command {
@@ -37,6 +38,7 @@ impl Serializable for Command {
             &Command::Verack      =>   "verack\0\0\0\0\0\0",
             &Command::Ping        => "ping\0\0\0\0\0\0\0\0",
             &Command::Pong        => "pong\0\0\0\0\0\0\0\0",
+            &Command::Reject      =>   "reject\0\0\0\0\0\0",
         };
 
         let mut result = vec![];
@@ -57,6 +59,7 @@ impl Command {
             "pong\0\0\0\0\0\0\0\0" => Ok(Command::Pong),
             "getaddr\0\0\0\0\0"    => Ok(Command::GetAddr),
             "addr\0\0\0\0\0\0\0\0" => Ok(Command::Addr),
+            "reject\0\0\0\0\0\0"   => Ok(Command::Reject),
             _                      => {
                 println!("Unrecognized command {:?}", data);
                 Err(format!("Unrecognized command `{:?}`\n", data))
@@ -145,19 +148,17 @@ impl Serializable for VersionMessage {
     fn serialize(&self) -> Vec<u8> {
         let mut result = vec![];
 
-        result.extend(IntUtils::i32_to_vec_u8_padded(self.version).iter().cloned());
-        result.extend(self.services.serialize().iter().cloned());
+        result.extend(IntUtils::i32_to_vec_u8_padded(self.version).into_iter());
+        result.extend(self.services.serialize().into_iter());
         result.extend(IntUtils::to_vec_u8_padded(
-                self.timestamp.to_timespec().sec).iter().cloned());
-        result.extend(self.addr_recv.serialize(false).iter().cloned());
+                self.timestamp.to_timespec().sec).into_iter());
+        result.extend(self.addr_recv.serialize(false).into_iter());
         if self.version >= 106 {
-            result.extend(self.addr_from.serialize(false).iter().cloned());
-            result.extend(IntUtils::u64_to_vec_u8_padded(self.nonce).iter().cloned());
-            result.extend(IntUtils::to_variable_length_int(
-                    self.user_agent.as_bytes().len() as u64).iter().cloned());
-            result.extend(self.user_agent.as_bytes().iter().cloned());
+            result.extend(self.addr_from.serialize(false).into_iter());
+            result.extend(IntUtils::u64_to_vec_u8_padded(self.nonce).into_iter());
+            result.extend(ParserUtils::to_string(&self.user_agent).into_iter());
             result.extend(IntUtils::i32_to_vec_u8_padded(
-                    self.start_height).iter().cloned());
+                    self.start_height).into_iter());
         }
         if self.version >= 70001 {
             result.push(if self.relay { 0x01 } else { 0x00 });
@@ -244,6 +245,37 @@ impl AddrMessage {
 
         AddrMessage {
             addr_list: addr_list,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct RejectMessage {
+    message: String,
+    ccode: u8,
+    reason: String,
+    data: u8,
+}
+
+impl Serializable for RejectMessage {
+    fn serialize(&self) -> Vec<u8> {
+        let mut result = vec![];
+        result.extend(ParserUtils::to_string(&self.message).into_iter());
+        result.push(self.ccode);
+        result.extend(ParserUtils::to_string(&self.reason).into_iter());
+        result.push(self.data);
+
+        result
+    }
+}
+
+impl RejectMessage {
+    pub fn deserialize(data: &mut Vec<u8>) -> RejectMessage {
+        RejectMessage {
+            message: ParserUtils::get_string(data),
+            ccode: data.pop().unwrap(),
+            reason: ParserUtils::get_string(data),
+            data: data.pop().unwrap(),
         }
     }
 }

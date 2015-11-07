@@ -18,6 +18,8 @@ use std::sync::{Mutex, MutexGuard, Arc};
 use std::thread;
 use std::mem;
 
+use mio::Token;
+
 struct BitcoinClient {
     version: i32,
     services: Services,
@@ -26,7 +28,7 @@ struct BitcoinClient {
 }
 
 struct State {
-    peers: HashMap<Ipv6Addr, Peer>,
+    peers: HashMap<mio::Token, Peer>,
     message_queue: VecDeque<Vec<u8>>,
     network_type: NetworkType,
 }
@@ -40,23 +42,9 @@ impl State {
         }
     }
 
-    pub fn add_peer(&mut self, version: VersionMessage) {
-        if self.is_known(&version) {
-            return;
-        }
-
-        let ip = version.addr_from.address;
-        self.peers.insert(ip, Peer::new(time::now(), version));
+    pub fn add_peer(&mut self, token: mio::Token, version: VersionMessage) {
+        self.peers.insert(token, Peer::new(time::now(), version));
         println!("peers = {:?}", self.peers);
-    }
-
-    fn is_known(&self, version: &VersionMessage) -> bool {
-        let ip = version.addr_from.address;
-        self.peers
-            .get(&ip)
-            .map(|p| p.version())
-            .map(|v| *v == *version)
-            .unwrap_or(false)
     }
 
     pub fn queue_message(&mut self, command: Command, message: Option<Box<Serializable>>) {
@@ -67,7 +55,7 @@ impl State {
         self.message_queue.push_back(to_send);
     }
 
-    pub fn get_peers(&self) -> &HashMap<Ipv6Addr, Peer> { &self.peers }
+    pub fn get_peers(&self) -> &HashMap<mio::Token, Peer> { &self.peers }
 }
 
 #[derive(Debug)]
@@ -110,8 +98,8 @@ impl BitcoinClient {
                 time::now(),
                 self.services,
                 // TODO: use upnp
-                "0:0:0:0:0:ffff:c0a8:10".parse().unwrap(),
-                18333),
+                "0:0:0:0:0:ffff:c0a8:3865".parse().unwrap(),
+                18334),
             addr_from: recipient_ip,
             // TODO: figure it out this
             nonce: 1234,
@@ -121,14 +109,14 @@ impl BitcoinClient {
         }
     }
 
-    fn handle_version(&mut self, message: VersionMessage) {
+    fn handle_version(&mut self, token: mio::Token, message: VersionMessage) {
         let mut state = self.state.lock().unwrap();
 
         let version = self.generate_version_message(message.addr_recv);
-        state.add_peer(message);
+        state.add_peer(token, message);
 
-        state.queue_message(Command::Verack, None);
         state.queue_message(Command::Version, Some(Box::new(version)));
+        state.queue_message(Command::Verack, None);
     }
 
     fn handle_addr(&mut self, _: AddrMessage) {
@@ -152,6 +140,10 @@ impl BitcoinClient {
         unimplemented!()
     }
 
+    fn handle_reject(&self, message: RejectMessage) {
+        println!("Message = {:?}", message);
+    }
+
     fn handle_ping(&self, message: PingMessage) {
         self.lock_state()
             .queue_message(Command::Pong, Some(Box::new(message)));
@@ -159,7 +151,7 @@ impl BitcoinClient {
 
     fn lock_state<'a>(&'a self) -> MutexGuard<'a, State> { self.state.lock().unwrap() }
 
-    fn handle_command(&mut self, header: MessageHeader,
+    fn handle_command(&mut self, header: MessageHeader, token: mio::Token,
                       message_bytes_: Vec<u8>) {
         if *header.magic() != self.lock_state().network_type {
             // This packet is not for the right version :O
@@ -183,7 +175,7 @@ impl BitcoinClient {
             &Command::Version => {
                 println!("==== Got message Version");
                 let message = VersionMessage::deserialize(&mut message_bytes);
-                self.handle_version(message);
+                self.handle_version(token, message);
             },
             &Command::Verack => {
                 println!("==== Got message Verack");
@@ -197,6 +189,12 @@ impl BitcoinClient {
                 println!("==== Got message GetAddr");
                 let message = AddrMessage::deserialize(&mut message_bytes);
                 self.handle_addr(message);
+            },
+            &Command::Reject => {
+                println!("==== Got message Reject :-(");
+                let message = RejectMessage::deserialize(&mut message_bytes);
+                println!("message = {:?}", message_bytes);
+                self.handle_reject(message);
             }
         };
 
@@ -205,12 +203,13 @@ impl BitcoinClient {
 }
 
 impl rpcengine::MessageHandler for BitcoinClient {
-    fn handle(&mut self, message_: Vec<u8>) -> VecDeque<Vec<u8>> {
+    fn handle(&mut self, token: mio::Token, message_: Vec<u8>) -> VecDeque<Vec<u8>> {
+        println!("Got RPC from {:?}", token);
         let mut message = message_;
         message.reverse();
 
         match MessageHeader::deserialize(&mut message) {
-            Ok(x) => self.handle_command(x, message),
+            Ok(x) => self.handle_command(x, token, message),
             Err(x) => println!("Error: {}", x),
         }
 
@@ -218,6 +217,10 @@ impl rpcengine::MessageHandler for BitcoinClient {
         let message_queue = mem::replace(&mut state.message_queue, VecDeque::new());
 
         message_queue
+    }
+
+    fn get_new_messages(&mut self) -> HashMap<mio::Token, Vec<Vec<u8>>> {
+        HashMap::new()
     }
 }
 
