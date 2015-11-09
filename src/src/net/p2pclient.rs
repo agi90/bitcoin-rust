@@ -1,4 +1,5 @@
 extern crate mio;
+extern crate rand;
 
 use std::net::SocketAddr;
 use mio::tcp;
@@ -12,11 +13,11 @@ use super::IPAddress;
 
 use time;
 
-use std::net::Ipv6Addr;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Mutex, MutexGuard, Arc};
 use std::thread;
 use std::mem;
+use std::io::Cursor;
 
 use mio::Token;
 
@@ -33,6 +34,13 @@ struct State {
     network_type: NetworkType,
 }
 
+fn print_bytes(data: &Vec<u8>) {
+    for d in data {
+        print!("{:02X} ", d);
+    }
+    print!("\n");
+}
+
 impl State {
     pub fn new(network_type: NetworkType) -> State {
         State {
@@ -44,13 +52,13 @@ impl State {
 
     pub fn add_peer(&mut self, token: mio::Token, version: VersionMessage) {
         self.peers.insert(token, Peer::new(time::now(), version));
-        println!("peers = {:?}", self.peers);
     }
 
     pub fn queue_message(&mut self, command: Command, message: Option<Box<Serializable>>) {
         let to_send = get_serialized_message(self.network_type,
                                              command,
                                              message);
+
 
         self.message_queue.push_back(to_send);
     }
@@ -94,15 +102,14 @@ impl BitcoinClient {
             version: self.version,
             services: self.services,
             timestamp: time::now(),
-            addr_recv: IPAddress::new(
-                time::now(),
+            addr_recv: recipient_ip,
+            addr_from: IPAddress::new(
                 self.services,
                 // TODO: use upnp
                 "0:0:0:0:0:ffff:c0a8:3865".parse().unwrap(),
                 18334),
-            addr_from: recipient_ip,
             // TODO: figure it out this
-            nonce: 1234,
+            nonce: rand::random::<u64>(),
             user_agent: self.user_agent.clone(),
             start_height: 0,
             relay: true,
@@ -120,7 +127,7 @@ impl BitcoinClient {
     }
 
     fn handle_addr(&mut self, _: AddrMessage) {
-        unimplemented!()
+        // TODO
     }
 
     fn handle_getaddr(&self) {
@@ -136,12 +143,18 @@ impl BitcoinClient {
         state.queue_message(Command::Addr, Some(Box::new(response)));
     }
 
+    fn handle_getheaders(&self) {
+        // TODO
+    }
+
     fn handle_pong(&self, _: PingMessage) {
         unimplemented!()
     }
 
     fn handle_reject(&self, message: RejectMessage) {
         println!("Message = {:?}", message);
+        println!("harakiri :-(");
+        panic!();
     }
 
     fn handle_ping(&self, message: PingMessage) {
@@ -152,66 +165,63 @@ impl BitcoinClient {
     fn lock_state<'a>(&'a self) -> MutexGuard<'a, State> { self.state.lock().unwrap() }
 
     fn handle_command(&mut self, header: MessageHeader, token: mio::Token,
-                      message_bytes_: Vec<u8>) {
+                      message_bytes_: &mut Cursor<Vec<u8>>) -> Result<(), String> {
         if *header.magic() != self.lock_state().network_type {
             // This packet is not for the right version :O
-            print!("Received packet for wrong version.");
-            return;
+            return Err(format!("Error: Received packet for wrong version. {:?}", header.magic()));
         }
 
         let mut message_bytes = message_bytes_;
-        let response = match header.command() {
+        match header.command() {
             &Command::Pong => {
-                println!("==== Got message Pong");
                 // Ping and Pong message use the same format
-                let message = PingMessage::deserialize(&mut message_bytes);
+                let message = try!(PingMessage::deserialize(message_bytes));
                 self.handle_pong(message);
             },
             &Command::Ping => {
-                println!("==== Got message Ping");
-                let message = PingMessage::deserialize(&mut message_bytes);
+                let message = try!(PingMessage::deserialize(message_bytes));
                 self.handle_ping(message);
             },
             &Command::Version => {
-                println!("==== Got message Version");
-                let message = VersionMessage::deserialize(&mut message_bytes);
+                let message = try!(VersionMessage::deserialize(message_bytes));
                 self.handle_version(token, message);
             },
             &Command::Verack => {
-                println!("==== Got message Verack");
                 self.handle_verack();
             },
             &Command::GetAddr => {
-                println!("==== Got message GetAddr");
                 self.handle_getaddr();
             },
+            &Command::GetHeaders => {
+                self.handle_getheaders();
+            },
+            &Command::Unknown => {
+                return Err(format!("Unknown message. {:?}", message_bytes));
+            },
             &Command::Addr => {
-                println!("==== Got message GetAddr");
-                let message = AddrMessage::deserialize(&mut message_bytes);
+                let message = try!(AddrMessage::deserialize(message_bytes));
                 self.handle_addr(message);
             },
             &Command::Reject => {
-                println!("==== Got message Reject :-(");
-                let message = RejectMessage::deserialize(&mut message_bytes);
-                println!("message = {:?}", message_bytes);
+                let message = try!(RejectMessage::deserialize(message_bytes));
                 self.handle_reject(message);
             }
         };
 
-        response
+        Ok(())
     }
 }
 
 impl rpcengine::MessageHandler for BitcoinClient {
-    fn handle(&mut self, token: mio::Token, message_: Vec<u8>) -> VecDeque<Vec<u8>> {
-        println!("Got RPC from {:?}", token);
-        let mut message = message_;
-        message.reverse();
+    fn handle(&mut self, token: mio::Token, message: Vec<u8>) -> VecDeque<Vec<u8>> {
+        let mut cursor = Cursor::new(message);
+        let handled = MessageHeader::deserialize(&mut cursor)
+            .map(|m| self.handle_command(m, token, &mut cursor));
 
-        match MessageHeader::deserialize(&mut message) {
-            Ok(x) => self.handle_command(x, token, message),
-            Err(x) => println!("Error: {}", x),
-        }
+        match handled {
+            Ok(x) => {},
+            Err(x) => { println!("Error: {}", x) },
+        };
 
         let mut state = self.state.lock().unwrap();
         let message_queue = mem::replace(&mut state.message_queue, VecDeque::new());

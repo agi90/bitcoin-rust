@@ -11,6 +11,7 @@ rust-crypto = "*"
 time = "0.1"
 mio = "0.4"
 bytes = "0.2.11"
+rand = "0.3"
 
 [profile.dev]
 opt-level = 0

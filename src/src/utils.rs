@@ -61,17 +61,20 @@ impl IntUtils {
         response
     }
 
+    fn add_sign(bytes_: Vec<u8>, sign: u8) -> Vec<u8> {
+        let mut bytes = bytes_;
+        let value = bytes.pop().unwrap();
+        bytes.push(value | sign);
+
+        bytes
+    }
+
     pub fn to_vec_u8(x: i64) -> Vec<u8> {
         IntUtils::to_vec_u8_base(x, false)
     }
 
     pub fn to_vec_u8_padded(x: i64) -> Vec<u8> {
         IntUtils::to_vec_u8_base(x, true)
-    }
-
-    pub fn u16_to_be_vec_u8_padded(x: u16) -> Vec<u8> {
-        let bytes = IntUtils::get_bytes(x as u64);
-        vec![bytes[1], bytes[0]]
     }
 
     pub fn u32_to_vec_u8_padded(x: u32) -> Vec<u8> {
@@ -83,14 +86,6 @@ impl IntUtils {
         let bytes = IntUtils::get_bytes(x as u64);
         vec![bytes[0], bytes[1], bytes[2], bytes[3],
              bytes[4], bytes[5], bytes[6], bytes[7]]
-    }
-
-    fn add_sign(bytes_: Vec<u8>, sign: u8) -> Vec<u8> {
-        let mut bytes = bytes_;
-        let value = bytes.pop().unwrap();
-        bytes.push(value | sign);
-
-        bytes
     }
 
     pub fn i32_to_vec_u8_padded(x: i32) -> Vec<u8> {
@@ -320,78 +315,6 @@ impl CryptoUtils {
 mod tests {
     use super::*;
     use rustc_serialize::base64::FromBase64;
-
-    #[test]
-    fn test_to_i32() {
-        assert_eq!(IntUtils::to_i32(&vec![0x01]), 1);
-        assert_eq!(IntUtils::to_i32(&vec![0x81]), -1);
-
-        assert_eq!(IntUtils::to_i32(&vec![0x7f]), 127);
-        assert_eq!(IntUtils::to_i32(&vec![0xff]), -127);
-
-        assert_eq!(IntUtils::to_i32(&vec![0x80, 0x00]), 128);
-        assert_eq!(IntUtils::to_i32(&vec![0x80, 0x80]), -128);
-
-        assert_eq!(IntUtils::to_i32(&vec![0xff, 0x7f]), 32767);
-        assert_eq!(IntUtils::to_i32(&vec![0xff, 0xff]), -32767);
-
-        assert_eq!(IntUtils::to_i32(&vec![0x00, 0x80, 0x00]), 32768);
-        assert_eq!(IntUtils::to_i32(&vec![0x00, 0x80, 0x80]), -32768);
-
-        assert_eq!(IntUtils::to_i32(&vec![0xff, 0xff, 0x7f]), 8388607);
-        assert_eq!(IntUtils::to_i32(&vec![0xff, 0xff, 0xff]), -8388607);
-
-        assert_eq!(IntUtils::to_i32(&vec![0x00, 0x00, 0x80, 0x00]), 8388608);
-        assert_eq!(IntUtils::to_i32(&vec![0x00, 0x00, 0x80, 0x80]), -8388608);
-
-        assert_eq!(IntUtils::to_i32(&vec![0xff, 0xff, 0xff, 0x7f]), 2147483647);
-        assert_eq!(IntUtils::to_i32(&vec![0xff, 0xff, 0xff, 0xff]), -2147483647);
-    }
-
-    #[test]
-    fn test_to_vec_u8() {
-        assert_eq!(vec![0x01], IntUtils::to_vec_u8(1));
-        assert_eq!(vec![0x81], IntUtils::to_vec_u8(-1));
-
-        assert_eq!(vec![0x7f], IntUtils::to_vec_u8(127));
-        assert_eq!(vec![0xff], IntUtils::to_vec_u8(-127));
-
-        assert_eq!(vec![0x80, 0x00], IntUtils::to_vec_u8(128));
-        assert_eq!(vec![0x80, 0x80], IntUtils::to_vec_u8(-128));
-
-        assert_eq!(vec![0xff, 0x7f], IntUtils::to_vec_u8(32767));
-        assert_eq!(vec![0xff, 0xff], IntUtils::to_vec_u8(-32767));
-
-        assert_eq!(vec![0x00, 0x80, 0x00], IntUtils::to_vec_u8(32768));
-        assert_eq!(vec![0x00, 0x80, 0x80], IntUtils::to_vec_u8(-32768));
-
-        assert_eq!(vec![0xff, 0xff, 0x7f], IntUtils::to_vec_u8(8388607));
-        assert_eq!(vec![0xff, 0xff, 0xff], IntUtils::to_vec_u8(-8388607));
-
-        assert_eq!(vec![0x00, 0x00, 0x80, 0x00], IntUtils::to_vec_u8(8388608));
-        assert_eq!(vec![0x00, 0x00, 0x80, 0x80], IntUtils::to_vec_u8(-8388608));
-
-        assert_eq!(vec![0xff, 0xff, 0xff, 0x7f], IntUtils::to_vec_u8(2147483647));
-        assert_eq!(vec![0xff, 0xff, 0xff, 0xff], IntUtils::to_vec_u8(-2147483647));
-    }
-
-    #[test]
-    fn test_i32_to_vec_u8_padded() {
-        assert_eq!(vec![0x00, 0x00, 0x00, 0x00], IntUtils::i32_to_vec_u8_padded(0x0000));
-        assert_eq!(vec![0x01, 0x00, 0x00, 0x00], IntUtils::i32_to_vec_u8_padded(0x0001));
-        assert_eq!(vec![0xfe, 0xff, 0x00, 0x00], IntUtils::i32_to_vec_u8_padded(0xfffe));
-        assert_eq!(vec![0xff, 0xff, 0xff, 0x7f],
-                   IntUtils::i32_to_vec_u8_padded(0x7fffffff));
-        assert_eq!(vec![0x01, 0x00, 0x00, 0x80], IntUtils::i32_to_vec_u8_padded(-0x1));
-    }
-
-    #[test]
-    fn test_u16_to_be_vec_u8_padded() {
-        assert_eq!(vec![0x00, 0x00], IntUtils::u16_to_be_vec_u8_padded(0x0000));
-        assert_eq!(vec![0x00, 0x01], IntUtils::u16_to_be_vec_u8_padded(0x0001));
-        assert_eq!(vec![0xff, 0xfe], IntUtils::u16_to_be_vec_u8_padded(0xfffe));
-        assert_eq!(vec![0xff, 0xff], IntUtils::u16_to_be_vec_u8_padded(0xffff));
-    }
 
     fn test_hash(hash: &Fn(Vec<u8>) -> Vec<u8>, input: &str, expected: &str) {
         let output = hash(input.from_base64().unwrap());

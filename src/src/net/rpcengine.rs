@@ -13,6 +13,13 @@ use std::collections::{VecDeque, HashMap};
 
 pub const SERVER: mio::Token = mio::Token(0);
 
+fn print_bytes(data: &Vec<u8>) {
+    for d in data {
+        print!("{:02X} ", d);
+    }
+    print!("\n");
+}
+
 pub trait MessageHandler {
     fn handle(&mut self, token: mio::Token, message: Vec<u8>) -> VecDeque<Vec<u8>>;
     fn get_new_messages(&mut self) -> HashMap<mio::Token, Vec<Vec<u8>>>;
@@ -38,6 +45,7 @@ impl RPCEngine {
 
     fn handle_rpc(&mut self, event_loop: &mut mio::EventLoop<RPCEngine>,
                   token: mio::Token, rpc: Vec<u8>) {
+
         let response: Vec<u8> = self.handler.handle(token, rpc)
             .into_iter().flat_map(|l| l.into_iter())
             .collect();
@@ -52,16 +60,12 @@ impl mio::Handler for RPCEngine {
 
     fn ready(&mut self, event_loop: &mut mio::EventLoop<RPCEngine>,
              token: mio::Token, events: mio::EventSet) {
-        println!("socket is ready; token={:?}; events={:?}", token, events);
-
         match token {
             SERVER => {
                 assert!(events.is_readable());
 
                 match self.server.accept() {
                     Ok(Some(socket)) => {
-                        println!("accepted a new client socket");
-
                         // TODO: handle errors
                         let token = self.connections
                             .insert_with(|token| Connection::new(socket, token))
@@ -119,20 +123,22 @@ impl Connection {
 
     fn ready(&mut self, event_loop: &mut mio::EventLoop<RPCEngine>,
              events: mio::EventSet) -> Vec<u8> {
-        match self.state.connection_state() {
-            &ConnectionState::Reading(..) => {
-                assert!(events.is_readable(), "unexpected events; events={:?}", events);
-                self.read(event_loop)
-            }
-            &ConnectionState::Writing(..) => {
-                assert!(events.is_writable(), "unexpected events; events={:?}", events);
-                self.write(event_loop)
-            }
-            _ => unimplemented!(),
+        let mut response = vec![];
+
+        if events.is_readable() {
+            response = self.read();
         }
+
+        if events.is_writable() {
+            self.write();
+        }
+
+        self.reregister(event_loop);
+
+        response
     }
 
-    fn read(&mut self, event_loop: &mut mio::EventLoop<RPCEngine>) -> Vec<u8> {
+    fn read(&mut self) -> Vec<u8> {
         match self.socket.try_read_buf(self.state.mut_read_buf()) {
             Ok(Some(0)) => {
                 // The client has closed the read socket, for now
@@ -141,41 +147,42 @@ impl Connection {
                 vec![]
             }
             Ok(Some(n)) => {
-                println!("read {} bytes", n);
                 match self.state.try_get_rpc() {
                     Ok(x) => {
-                        self.state.try_transition_to_writing();
-                        self.reregister(event_loop);
                         x
                     },
                     Err(x) => {
                         println!("Error: {}", x);
+                        self.state.close();
                         vec![]
                     }
                 }
             }
             Ok(None) => {
-                self.reregister(event_loop);
                 vec![]
             }
             Err(e) => {
-                panic!("got an error trying to read; err={:?}", e);
+                println!("Got an error trying to read; err={:?}", e);
+                println!("closing connection.");
+
+                self.state.close();
+                vec![]
             }
         }
     }
 
-    fn write(&mut self, event_loop: &mut mio::EventLoop<RPCEngine>) -> Vec<u8> {
+    fn write(&mut self) {
+        if !self.state.write_buf().has_remaining() {
+            return;
+        }
+
         // TODO: handle error
         match self.socket.try_write_buf(self.state.mut_write_buf()) {
-            Ok(Some(_)) => {
-                let result = self.state.try_transition_to_reading();
-                self.reregister(event_loop);
-                result
-            }
-            Ok(None) => {
-                self.reregister(event_loop);
-                vec![]
-            }
+            Ok(_) => {
+                if !self.state.write_buf().has_remaining() {
+                    self.state.clear_write_buf();
+                }
+            },
             Err(e) => {
                 panic!("got an error trying to write; err={:?}", e);
             }
@@ -183,10 +190,12 @@ impl Connection {
     }
 
     fn reregister(&self, event_loop: &mut mio::EventLoop<RPCEngine>) {
-        let event_set = match self.state.connection_state() {
-            &ConnectionState::Reading(..) => mio::EventSet::readable(),
-            &ConnectionState::Writing(..) => mio::EventSet::writable(),
-            _ => mio::EventSet::none(),
+        let event_set = if self.state.write_buf().has_remaining() {
+            mio::EventSet::readable() | mio::EventSet::writable()
+        } else if self.state.connection_state() == &ConnectionState::Active {
+            mio::EventSet::readable()
+        } else {
+            mio::EventSet::none()
         };
 
         event_loop.reregister(&self.socket, self.token, event_set,
@@ -204,8 +213,7 @@ impl Connection {
 
 #[derive(Debug, PartialEq)]
 enum ConnectionState {
-    Reading,
-    Writing,
+    Active,
     Closed,
 }
 
@@ -221,7 +229,7 @@ impl State {
         State {
             reading_buf: vec![],
             writing_buf: Cursor::new(vec![]),
-            connection_state: ConnectionState::Reading,
+            connection_state: ConnectionState::Active,
         }
     }
 
@@ -238,7 +246,6 @@ impl State {
         writing_buf.extend(message.into_iter());
 
         self.writing_buf = Cursor::new(writing_buf);
-        self.try_transition_to_writing();
     }
 
     fn try_get_rpc(&mut self) -> Result<Vec<u8>, String> {
@@ -249,127 +256,40 @@ impl State {
             return Ok(vec![]);
         }
 
-        // TODO: accept [u8] in deserialize functions
-        //       or even a Take<>
-        let mut header_bytes = vec![];
-        header_bytes.extend(self.reading_buf[0..24].into_iter());
-        header_bytes.reverse();
+        // TODO: make serialize accept &[u8]
+        let mut reading_buf = mem::replace(&mut self.reading_buf, vec![]);
+        let mut cursor = Cursor::new(reading_buf);
 
-        let header = try!(messages::MessageHeader::deserialize(&mut header_bytes));
-        print!("header = {:?}\n", header);
+        let header = try!(messages::MessageHeader::deserialize(&mut cursor));
 
+        let mut reading_buf_ = cursor.into_inner();
         // The input doesn't have the full message, let's wait
-        if self.reading_buf.len() < 24 + header.len() as usize {
+        if reading_buf_.len() < 24 + header.len() as usize {
+            mem::replace(&mut self.reading_buf, reading_buf_);
             return Ok(vec![]);
         }
 
-        let mut reading_buf = mem::replace(&mut self.reading_buf, vec![]);
-        let remaining = reading_buf.split_off(24 + header.len() as usize);
+        let remaining = reading_buf_.split_off(24 + header.len() as usize);
 
         self.reading_buf = remaining;
-        Ok(reading_buf)
+        Ok(reading_buf_)
     }
 
     pub fn mut_read_buf(&mut self) -> &mut Vec<u8> {
-        assert!(self.connection_state == ConnectionState::Reading);
+        assert!(self.connection_state == ConnectionState::Active);
 
         &mut self.reading_buf
     }
 
+    pub fn clear_write_buf(&mut self) {
+        self.writing_buf = Cursor::new(vec![]);
+    }
+
+    pub fn write_buf(&self) -> &Cursor<Vec<u8>> {
+        &self.writing_buf
+    }
+
     pub fn mut_write_buf(&mut self) -> &mut Cursor<Vec<u8>> {
-        assert!(self.connection_state == ConnectionState::Writing);
-
         &mut self.writing_buf
-    }
-
-    fn try_transition_to_writing(&mut self) {
-        println!("Try transitioning to writing");
-        if self.writing_buf.has_remaining() {
-            self.connection_state = ConnectionState::Writing;
-        }
-    }
-
-    fn try_transition_to_reading(&mut self) -> Vec<u8> {
-        println!("Try transitioning to reading");
-        if !self.writing_buf.has_remaining() {
-            self.connection_state = ConnectionState::Reading;
-
-            // There could be an RPC waiting for us already
-            match self.try_get_rpc() {
-                Ok(x) => x,
-                Err(x) => {
-                    println!("Error: {}", x);
-                    vec![]
-                }
-            }
-        } else {
-            vec![]
-        }
-    }
-}
-
-/*
- *
- * ===== TESTS =====
- *
- */
-
-#[cfg(test)]
-mod test {
-    use std::io::{BufRead, BufReader, Read, Write};
-    use std::net::{Shutdown, TcpStream};
-
-    #[test]
-    pub fn test_basic_echoing() {
-        start_server();
-
-        let mut sock = BufReader::new(TcpStream::connect(HOST).unwrap());
-        let mut recv = String::new();
-
-        sock.get_mut().write_all(b"hello world\n").unwrap();
-        sock.read_line(&mut recv).unwrap();
-
-        assert_eq!(recv, "hello world\n");
-
-        recv.clear();
-
-        sock.get_mut().write_all(b"this is a line\n").unwrap();
-        sock.read_line(&mut recv).unwrap();
-
-        assert_eq!(recv, "this is a line\n");
-    }
-
-    #[test]
-    pub fn test_handling_client_shutdown() {
-        start_server();
-
-        let mut sock = TcpStream::connect(HOST).unwrap();
-
-        sock.write_all(b"hello world").unwrap();
-        sock.shutdown(Shutdown::Write).unwrap();
-
-        let mut recv = vec![];
-        sock.read_to_end(&mut recv).unwrap();
-
-        assert_eq!(recv, b"hello world");
-    }
-
-    const HOST: &'static str = "0.0.0.0:13254";
-
-    fn start_server() {
-        use std::thread;
-        use std::sync::{Once, ONCE_INIT};
-
-        static INIT: Once = ONCE_INIT;
-
-        INIT.call_once(|| {
-            thread::spawn(|| {
-                super::start(HOST.parse().unwrap())
-            });
-
-            while let Err(_) = TcpStream::connect(HOST) {
-                // Loop
-            }
-        });
     }
 }
