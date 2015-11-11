@@ -1,7 +1,6 @@
 #![feature(read_exact)]
 mod utils;
 pub mod script;
-pub mod transaction;
 pub mod net;
 
 extern crate crypto;

@@ -123,58 +123,16 @@ impl IntUtils {
     }
 }
 
-pub struct ParserUtils;
+#[allow(dead_code)]
+pub struct Debug;
 
-impl ParserUtils {
-    #[allow(dead_code)] // Debug function
+#[allow(dead_code)]
+impl Debug {
     pub fn print_bytes(data: &Vec<u8>) {
         for d in data {
             print!("{:02X} ", d);
         }
         print!("\n");
-    }
-
-    pub fn get_fixed(data: &mut Vec<u8>, bytes: u8) -> u64 {
-        assert!(bytes == 2 || bytes == 4 || bytes == 8);
-        assert!(data.len() >= bytes as usize);
-
-        IntUtils::to_u64(&ParserUtils::get_bytes(data, bytes as u64))
-    }
-
-    pub fn get_bytes(data: &mut Vec<u8>, bytes: u64) -> Vec<u8> {
-        assert!(data.len() >= bytes as usize);
-        let mut bytes_data = vec![];
-
-        for _ in 0..bytes {
-            bytes_data.push(data.pop().unwrap());
-        }
-
-        bytes_data
-    }
-
-    pub fn get_fixed_u32(data: &mut Vec<u8>) -> u32 {
-        ParserUtils::get_fixed(data, 4) as u32
-    }
-
-    pub fn get_fixed_u64(data: &mut Vec<u8>) -> u64 {
-        ParserUtils::get_fixed(data, 8)
-    }
-
-    pub fn get_variable_length_int(data: &mut Vec<u8>) -> u64 {
-        let last = data.pop().unwrap();
-
-        if last < 0xfd {
-            return last as u64;
-        }
-
-        let bytes = match last {
-            0xfd => 2,
-            0xfe => 4,
-            0xff => 8,
-            _ => unreachable!(),
-        };
-
-        IntUtils::to_u64(&ParserUtils::get_bytes(data, bytes))
     }
 }
 
