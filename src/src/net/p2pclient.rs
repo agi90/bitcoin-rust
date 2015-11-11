@@ -47,15 +47,12 @@ impl State {
         self.peers.insert(token, Peer::new(time::now(), version));
     }
 
-    pub fn queue_message(&mut self, command: Command, message: Option<Box<Serializable>>) {
+    pub fn queue_message(&mut self, command: Command, message: Option<Box<Serialize>>) {
         let to_send = get_serialized_message(self.network_type,
                                              command,
                                              message);
 
-        match to_send {
-            Err(x) => println!("Error: {}", x),
-            Ok(x) => self.message_queue.push_back(x),
-        }
+        self.message_queue.push_back(to_send);
     }
 
     pub fn get_peers(&self) -> &HashMap<mio::Token, Peer> { &self.peers }

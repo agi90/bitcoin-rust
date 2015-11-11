@@ -4,7 +4,7 @@ pub mod p2pclient;
 
 use std::net;
 
-use self::messages::{Data, ContainerData};
+use self::messages::Data;
 
 #[derive(PartialEq, Copy, Clone, Debug)]
 pub struct Services {
@@ -27,11 +27,6 @@ impl Services {
             node_network: node_network,
         })
     }
-
-    pub fn to_data(&self) -> Data {
-        let data = if self.node_network { 1 } else { 0 };
-        Data::Unsigned(data)
-    }
 }
 
 #[derive(PartialEq, Debug, Clone, Copy)]
@@ -48,16 +43,6 @@ impl IPAddress {
             address: address,
             port: port,
         }
-    }
-
-    pub fn to_data(&self) -> ContainerData {
-        let data = vec![
-            self.services.to_data(),
-            Data::Ip(self.address),
-            Data::Unsigned(self.port as u64),
-        ];
-
-        ContainerData::Struct(data)
     }
 
     pub fn from_data(data: &Vec<Data>) -> Result<IPAddress, String> {
