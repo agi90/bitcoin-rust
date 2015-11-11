@@ -1,12 +1,9 @@
-
 use crypto::digest::Digest;
 use crypto::sha1;
 use crypto::sha2;
 use crypto::ripemd160;
 
 pub struct IntUtils;
-
-use time;
 
 impl IntUtils {
     fn get_bytes(u: u64) -> [u8; 8] {
@@ -73,28 +70,6 @@ impl IntUtils {
         IntUtils::to_vec_u8_base(x, false)
     }
 
-    pub fn to_vec_u8_padded(x: i64) -> Vec<u8> {
-        IntUtils::to_vec_u8_base(x, true)
-    }
-
-    pub fn u32_to_vec_u8_padded(x: u32) -> Vec<u8> {
-        let bytes = IntUtils::get_bytes(x as u64);
-        vec![bytes[0], bytes[1], bytes[2], bytes[3]]
-    }
-
-    pub fn u64_to_vec_u8_padded(x: u64) -> Vec<u8> {
-        let bytes = IntUtils::get_bytes(x as u64);
-        vec![bytes[0], bytes[1], bytes[2], bytes[3],
-             bytes[4], bytes[5], bytes[6], bytes[7]]
-    }
-
-    pub fn i32_to_vec_u8_padded(x: i32) -> Vec<u8> {
-        let (mut bytes, sign) = IntUtils::get_raw_result(x as i64, true);
-        bytes.truncate(4);
-
-        IntUtils::add_sign(bytes, sign)
-    }
-
     pub fn to_u64(x: &Vec<u8>) -> u64 {
         assert!(x.len() <= 8);
 
@@ -106,18 +81,6 @@ impl IntUtils {
         }
 
         result as u64
-    }
-
-    pub fn to_variable_length_int(data: u64) -> Vec<u8> {
-        let bytes = IntUtils::get_bytes(data);
-
-        match data {
-            0x00000...0x0000000fd => vec![bytes[0]],
-            0x000fd...0x000010000 => vec![0xfd, bytes[0], bytes[1]],
-            0x10000...0x100000000 => vec![0xfe, bytes[0], bytes[1], bytes[2], bytes[3]],
-            _                     => vec![0xff, bytes[0], bytes[1], bytes[2], bytes[3],
-                                                bytes[4], bytes[5], bytes[6], bytes[7]],
-        }
     }
 
     pub fn to_u32(x: &Vec<u8>) -> u32 {
@@ -163,20 +126,12 @@ impl IntUtils {
 pub struct ParserUtils;
 
 impl ParserUtils {
-    pub fn get_be_fixed(data: &mut Vec<u8>, bytes: u8) -> u64 {
-        assert!(bytes == 2 || bytes == 4 || bytes == 8);
-        assert!(data.len() >= bytes as usize);
-
-        let mut bytes = ParserUtils::get_bytes(data, bytes as u64);
-        bytes.reverse();
-
-        IntUtils::to_u64(&bytes)
-    }
-
-    pub fn get_fixed_i32(data: &mut Vec<u8>) -> i32 {
-        assert!(data.len() >= 4 as usize);
-
-        IntUtils::to_i32(&ParserUtils::get_bytes(data, 4))
+    #[allow(dead_code)] // Debug function
+    pub fn print_bytes(data: &Vec<u8>) {
+        for d in data {
+            print!("{:02X} ", d);
+        }
+        print!("\n");
     }
 
     pub fn get_fixed(data: &mut Vec<u8>, bytes: u8) -> u64 {
@@ -184,16 +139,6 @@ impl ParserUtils {
         assert!(data.len() >= bytes as usize);
 
         IntUtils::to_u64(&ParserUtils::get_bytes(data, bytes as u64))
-    }
-
-    pub fn get_time(data: &mut Vec<u8>) -> time::Tm {
-        // TODO: fix the case when u64 is too big for i64
-        let sec = ParserUtils::get_fixed_u64(data) as i64;
-        time::at_utc(time::Timespec::new(sec, 0))
-    }
-
-    pub fn serialize_time(timestamp: time::Tm) -> Vec<u8> {
-        IntUtils::to_vec_u8_padded(timestamp.to_timespec().sec)
     }
 
     pub fn get_bytes(data: &mut Vec<u8>, bytes: u64) -> Vec<u8> {
@@ -207,43 +152,8 @@ impl ParserUtils {
         bytes_data
     }
 
-    pub fn get_be_fixed_u16(data: &mut Vec<u8>) -> u16 {
-        ParserUtils::get_be_fixed(data, 2) as u16
-    }
-
     pub fn get_fixed_u32(data: &mut Vec<u8>) -> u32 {
         ParserUtils::get_fixed(data, 4) as u32
-    }
-
-    pub fn get_bool(data: &mut Vec<u8>) -> bool {
-        let bytes = ParserUtils::get_bytes(data, 1);
-
-        if bytes[0] == 0 {
-            false
-        } else {
-            true
-        }
-    }
-
-    pub fn get_fixed_string(data: &mut Vec<u8>, length: u64) -> String {
-        let bytes = ParserUtils::get_bytes(data, length);
-        // TODO: return error
-        String::from_utf8(bytes).unwrap()
-    }
-
-    pub fn to_string(data: &str) -> Vec<u8> {
-        let length = data.len() as u64;
-
-        let mut result = vec![];
-        result.extend(IntUtils::u64_to_vec_u8_padded(length));
-        result.extend(data.as_bytes().iter().cloned());
-
-        result
-    }
-
-    pub fn get_string(data: &mut Vec<u8>) -> String {
-        let length = ParserUtils::get_variable_length_int(data);
-        ParserUtils::get_fixed_string(data, length)
     }
 
     pub fn get_fixed_u64(data: &mut Vec<u8>) -> u64 {

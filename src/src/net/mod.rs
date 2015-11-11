@@ -3,9 +3,8 @@ pub mod messages;
 pub mod p2pclient;
 
 use std::net;
-use utils::ParserUtils;
 
-use self::messages::{Data, BasicType, ContainerData};
+use self::messages::{Data, ContainerData};
 
 #[derive(PartialEq, Copy, Clone, Debug)]
 pub struct Services {

@@ -2,7 +2,6 @@ use super::IPAddress;
 use super::Services;
 use utils::CryptoUtils;
 
-use std::collections::HashMap;
 use std::io::Cursor;
 use std::io::Read;
 use std::net::Ipv6Addr;
@@ -10,15 +9,7 @@ use std::net::Ipv6Addr;
 use time;
 
 pub trait Serializable {
-    fn serialize(&self) -> Vec<u8>;
-}
-
-// Debug function
-fn print_bytes(data: &[u8]) {
-    for d in data.iter() {
-        print!("{:02X} ", d);
-    }
-    print!("\n");
+    fn serialize(&self) -> Result<Vec<u8>, String>;
 }
 
 #[derive(PartialEq, Copy, Clone, Debug)]
@@ -102,7 +93,7 @@ impl Data {
         assert!(size < 256);
 
         let mut buff = [0; 256];
-        let data = try!(Data::read(buffer, &mut buff[0..size]));
+        try!(Data::read(buffer, &mut buff[0..size]));
 
         let mut result = vec![];
         result.extend(buff[0..size].into_iter());
@@ -523,7 +514,7 @@ impl ContainerData {
                 ContainerData::put_struct(buffer, data, types)
             },
             (&ContainerType::VarArray(ref index, ref types), &ContainerData::Array(ref data)) => {
-                Data::Unsigned(data.len() as u64).serialize(buffer, index);
+                try!(Data::Unsigned(data.len() as u64).serialize(buffer, index));
                 ContainerData::put_array(buffer, data, types)
             },
             (&ContainerType::FixedArray(size, ref types), &ContainerData::Array(ref data)) => {
@@ -684,10 +675,6 @@ impl Message {
         self.unwrap_at(index).and_then(|d| d.value_u())
     }
 
-    pub fn get_i64(&self, index: usize) -> Result<i64, String> {
-        self.unwrap_at(index).and_then(|d| d.value_i())
-    }
-
     pub fn get_i32(&self, index: usize) -> Result<i32, String> {
         self.unwrap_at(index).and_then(|d| d.value_i())
             .and_then(|d| Ok(d as i32))
@@ -767,7 +754,7 @@ pub struct MessageHeader {
 }
 
 impl Serializable for MessageHeader {
-    fn serialize(&self) -> Vec<u8> {
+    fn serialize(&self) -> Result<Vec<u8>, String> {
         let mut command = vec![];
         command.extend(self.command.to_bytes().iter().cloned());
 
@@ -779,9 +766,9 @@ impl Serializable for MessageHeader {
         ];
 
         let mut buffer = vec![];
-        Message::new(MESSAGE_HEADER, data).serialize(&mut buffer);
+        try!(Message::new(MESSAGE_HEADER, data).serialize(&mut buffer));
 
-        buffer
+        Ok(buffer)
     }
 }
 
@@ -844,7 +831,7 @@ pub struct VersionMessage {
 }
 
 impl Serializable for VersionMessage {
-    fn serialize(&self) -> Vec<u8> {
+    fn serialize(&self) -> Result<Vec<u8>, String> {
         let data = vec![
             ContainerData::Base(Data::Signed(self.version as i64)),
             ContainerData::Base(self.services.to_data()),
@@ -858,9 +845,9 @@ impl Serializable for VersionMessage {
         ];
 
         let mut buffer = vec![];
-        Message::new(VERSION_MESSAGE, data).serialize(&mut buffer);
+        try!(Message::new(VERSION_MESSAGE, data).serialize(&mut buffer));
 
-        buffer
+        Ok(buffer)
     }
 }
 
@@ -891,15 +878,15 @@ pub struct PingMessage {
 }
 
 impl Serializable for PingMessage {
-    fn serialize(&self) -> Vec<u8> {
+    fn serialize(&self) -> Result<Vec<u8>, String> {
         let data = vec![
             ContainerData::Base(Data::Unsigned(self.nonce))
         ];
 
         let mut buffer = vec![];
-        Message::new(PING_MESSAGE, data).serialize(&mut buffer);
+        try!(Message::new(PING_MESSAGE, data).serialize(&mut buffer));
 
-        buffer
+        Ok(buffer)
     }
 }
 
@@ -923,7 +910,7 @@ pub struct AddrMessage {
 }
 
 impl Serializable for AddrMessage {
-    fn serialize(&self) -> Vec<u8> {
+    fn serialize(&self) -> Result<Vec<u8>, String> {
         let mut data = vec![];
 
         for addr in &self.addr_list {
@@ -934,10 +921,10 @@ impl Serializable for AddrMessage {
         }
 
         let mut buffer = vec![];
-        Message::new(ADDR_MESSAGE,
-                     vec![ContainerData::Array(data)]).serialize(&mut buffer);
+        try!(Message::new(ADDR_MESSAGE,
+                     vec![ContainerData::Array(data)]).serialize(&mut buffer));
 
-        buffer
+        Ok(buffer)
     }
 }
 
@@ -986,7 +973,7 @@ pub struct RejectMessage {
 }
 
 impl Serializable for RejectMessage {
-    fn serialize(&self) -> Vec<u8> {
+    fn serialize(&self) -> Result<Vec<u8>, String> {
         let data = vec![
             ContainerData::Base(Data::VarString(self.message.clone())),
             ContainerData::Base(Data::Unsigned(self.ccode as u64)),
@@ -994,9 +981,9 @@ impl Serializable for RejectMessage {
         ];
 
         let mut buffer = vec![];
-        Message::new(REJECT_MESSAGE, data).serialize(&mut buffer);
+        try!(Message::new(REJECT_MESSAGE, data).serialize(&mut buffer));
 
-        buffer
+        Ok(buffer)
     }
 }
 
@@ -1014,9 +1001,9 @@ impl RejectMessage {
 
 pub fn get_serialized_message(network_type: NetworkType,
                               command: Command,
-                              message: Option<Box<Serializable>>) -> Vec<u8> {
+                              message: Option<Box<Serializable>>) -> Result<Vec<u8>, String> {
     let serialized = match message {
-        Some(x) => x.serialize(),
+        Some(x) => try!(x.serialize()),
         None => vec![],
     };
 
@@ -1031,10 +1018,10 @@ pub fn get_serialized_message(network_type: NetworkType,
     };
 
     let mut result = vec![];
-    result.extend(header.serialize().into_iter());
+    result.extend(try!(header.serialize()).into_iter());
     result.extend(serialized.iter().into_iter());
 
-    result
+    Ok(result)
 }
 
 #[cfg(test)]

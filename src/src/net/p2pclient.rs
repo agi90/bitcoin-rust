@@ -34,13 +34,6 @@ struct State {
     network_type: NetworkType,
 }
 
-fn print_bytes(data: &Vec<u8>) {
-    for d in data {
-        print!("{:02X} ", d);
-    }
-    print!("\n");
-}
-
 impl State {
     pub fn new(network_type: NetworkType) -> State {
         State {
@@ -59,8 +52,10 @@ impl State {
                                              command,
                                              message);
 
-
-        self.message_queue.push_back(to_send);
+        match to_send {
+            Err(x) => println!("Error: {}", x),
+            Ok(x) => self.message_queue.push_back(x),
+        }
     }
 
     pub fn get_peers(&self) -> &HashMap<mio::Token, Peer> { &self.peers }
@@ -79,8 +74,6 @@ impl Peer {
             version: version,
         }
     }
-
-    pub fn version(&self) -> &VersionMessage { &self.version }
 }
 
 impl BitcoinClient {
@@ -218,9 +211,8 @@ impl rpcengine::MessageHandler for BitcoinClient {
         let handled = MessageHeader::deserialize(&mut cursor)
             .map(|m| self.handle_command(m, token, &mut cursor));
 
-        match handled {
-            Ok(x) => {},
-            Err(x) => { println!("Error: {}", x) },
+        if handled.is_err() {
+           println!("Error: {:?}", handled);
         };
 
         let mut state = self.state.lock().unwrap();

@@ -13,13 +13,6 @@ use std::collections::{VecDeque, HashMap};
 
 pub const SERVER: mio::Token = mio::Token(0);
 
-fn print_bytes(data: &Vec<u8>) {
-    for d in data {
-        print!("{:02X} ", d);
-    }
-    print!("\n");
-}
-
 pub trait MessageHandler {
     fn handle(&mut self, token: mio::Token, message: Vec<u8>) -> VecDeque<Vec<u8>>;
     fn get_new_messages(&mut self) -> HashMap<mio::Token, Vec<Vec<u8>>>;
@@ -146,7 +139,7 @@ impl Connection {
                 self.state.close();
                 vec![]
             }
-            Ok(Some(n)) => {
+            Ok(Some(_)) => {
                 match self.state.try_get_rpc() {
                     Ok(x) => {
                         x
@@ -257,7 +250,7 @@ impl State {
         }
 
         // TODO: make serialize accept &[u8]
-        let mut reading_buf = mem::replace(&mut self.reading_buf, vec![]);
+        let reading_buf = mem::replace(&mut self.reading_buf, vec![]);
         let mut cursor = Cursor::new(reading_buf);
 
         let header = try!(messages::MessageHeader::deserialize(&mut cursor));
