@@ -8,8 +8,9 @@ use mio::util::Slab;
 use bytes::Buf;
 use std::mem;
 use std::io::Cursor;
-use super::messages;
 use std::collections::{VecDeque, HashMap};
+
+use super::messages::{MessageHeader, Deserialize, Deserializer, Flag};
 
 pub const SERVER: mio::Token = mio::Token(0);
 
@@ -249,23 +250,26 @@ impl State {
             return Ok(vec![]);
         }
 
-        // TODO: make serialize accept &[u8]
-        let reading_buf = mem::replace(&mut self.reading_buf, vec![]);
-        let mut cursor = Cursor::new(reading_buf);
+        if let Some(message_len) = self.get_message_length() {
+            // The input doesn't have the full message, let's wait
+            if self.reading_buf.len() < 24 + message_len {
+                return Ok(vec![]);
+            }
 
-        let header = try!(messages::MessageHeader::deserialize(&mut cursor));
+            let mut reading_buf = mem::replace(&mut self.reading_buf, vec![]);
+            let remaining = reading_buf.split_off(24 + message_len);
 
-        let mut reading_buf_ = cursor.into_inner();
-        // The input doesn't have the full message, let's wait
-        if reading_buf_.len() < 24 + header.len() as usize {
-            mem::replace(&mut self.reading_buf, reading_buf_);
-            return Ok(vec![]);
+            self.reading_buf = remaining;
+            Ok(reading_buf)
+        } else {
+            Ok(vec![])
         }
+    }
 
-        let remaining = reading_buf_.split_off(24 + header.len() as usize);
-
-        self.reading_buf = remaining;
-        Ok(reading_buf_)
+    fn get_message_length(&self) -> Option<usize> {
+        let mut cursor = Deserializer::new(&self.reading_buf[..]);
+        MessageHeader::deserialize(&mut cursor, Flag::NoFlag)
+            .map(|h| Some(h.len() as usize)).unwrap_or(None)
     }
 
     pub fn mut_read_buf(&mut self) -> &mut Vec<u8> {

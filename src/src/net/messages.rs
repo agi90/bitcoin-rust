@@ -30,43 +30,13 @@ pub enum Command {
     Unknown,
 }
 
-#[derive(Debug)]
-pub enum BasicType {
-    Bool,
-    FixedU8,
-    FixedU16,
-    // Big endian to use with IPs
-    FixedBEU16,
-    FixedU32,
-    FixedU64,
-    FixedI32,
-    FixedI64,
-    // size less than 256
-    Bytes(usize),
-    Ip,
-    Time,
-    ShortTime,
-    VarString,
-    VarInt,
-}
-
-#[derive(Debug, Clone)]
-pub enum Data {
-    Bool(bool),
-    Unsigned(u64),
-    Signed(i64),
-    Bytes(Vec<u8>),
-    Ip(Ipv6Addr),
-    Time(time::Tm),
-    VarString(String),
-}
-
 #[derive(PartialEq, Copy, Clone)]
 pub enum Flag {
     // applicable to i16 for now
     BigEndian,
-    // applicable to unsigned types
+    // applicable to unsigned types, strings, arrays
     VariableSize,
+    FixedSize(usize),
     // applicable to time::Tm
     ShortFormat,
     NoFlag,
@@ -266,6 +236,16 @@ impl Serialize for Services {
     }
 }
 
+impl Deserialize for IPAddress {
+    fn deserialize(deserializer: &mut Deserializer, _:Flag) -> Result<Self, String> {
+        Ok(IPAddress::new(
+            try!(Services::deserialize(deserializer, Flag::NoFlag)),
+            try!(Ipv6Addr::deserialize(deserializer, Flag::NoFlag)),
+                 try!(u16::deserialize(deserializer, Flag::BigEndian)),
+        ))
+    }
+}
+
 impl Serialize for IPAddress {
     fn serialize(&self, serializer: &mut Serializer, _: Flag) {
         self.services.serialize(serializer, Flag::NoFlag);
@@ -289,43 +269,150 @@ impl <T: Serialize> Serialize for [T] {
     }
 }
 
-impl Data {
-    pub fn deserialize(basic_type: &BasicType, buffer: &mut Cursor<Vec<u8>>) -> Result<Data, String> {
-        match basic_type {
-            &BasicType::Bool        => Data::get_bool(buffer),
-            &BasicType::FixedU8     => Data::get_u8(buffer),
-            &BasicType::FixedU16    => Data::get_u16(buffer),
-            &BasicType::FixedBEU16  => Data::get_be_u16(buffer),
-            &BasicType::FixedU32    => Data::get_u32(buffer),
-            &BasicType::FixedU64    => Data::get_u64(buffer),
-            &BasicType::FixedI32    => Data::get_i32(buffer),
-            &BasicType::FixedI64    => Data::get_i64(buffer),
-            &BasicType::Bytes(size) => Data::get_bytes(size, buffer),
-            &BasicType::Ip          => Data::get_ip(buffer),
-            &BasicType::Time        => Data::get_time(buffer),
-            &BasicType::ShortTime   => Data::get_short_time(buffer),
-            &BasicType::VarString   => Data::get_var_string(buffer),
-            &BasicType::VarInt      => Data::get_var_int(buffer),
+pub trait Deserialize: Sized {
+    fn deserialize(deserializer: &mut Deserializer, flag: Flag) -> Result<Self, String>;
+}
+
+#[derive(Debug)]
+pub struct Deserializer<'a> {
+    buffer: Cursor<&'a [u8]>,
+}
+
+impl Deserialize for i32 {
+    fn deserialize(deserializer: &mut Deserializer, _: Flag) -> Result<Self, String> {
+        deserializer.to_i(4).map(|r| r as i32)
+    }
+}
+
+impl Deserialize for i64 {
+    fn deserialize(deserializer: &mut Deserializer, _: Flag) -> Result<Self, String> {
+        deserializer.to_i(8)
+    }
+}
+
+impl Deserialize for u8 {
+    fn deserialize(deserializer: &mut Deserializer, _: Flag) -> Result<Self, String> {
+        deserializer.to_u(1, Flag::NoFlag).map(|r| r as u8)
+    }
+}
+
+impl Deserialize for u16 {
+    fn deserialize(deserializer: &mut Deserializer, flag: Flag) -> Result<Self, String> {
+        if flag == Flag::BigEndian {
+            deserializer.get_be_u16()
+        } else {
+            deserializer.to_u(2, flag).map(|r| r as u16)
+        }
+    }
+}
+
+impl Deserialize for u32 {
+    fn deserialize(deserializer: &mut Deserializer, flag: Flag) -> Result<Self, String> {
+        deserializer.to_u(4, flag).map(|r| r as u32)
+    }
+}
+
+impl Deserialize for u64 {
+    fn deserialize(deserializer: &mut Deserializer, flag: Flag) -> Result<Self, String> {
+        deserializer.to_u(8, flag).map(|r| r as u64)
+    }
+}
+
+impl Deserialize for Ipv6Addr {
+    fn deserialize(deserializer: &mut Deserializer, _: Flag) -> Result<Self, String> {
+        deserializer.to_ip()
+    }
+}
+
+impl Deserialize for time::Tm {
+    fn deserialize(deserializer: &mut Deserializer, flag: Flag) -> Result<Self, String> {
+        if flag == Flag::ShortFormat {
+            deserializer.to_short_time()
+        } else {
+            deserializer.to_time()
+        }
+    }
+}
+
+impl Deserialize for bool {
+    fn deserialize(deserializer: &mut Deserializer, _: Flag) -> Result<Self, String> {
+        deserializer.to_bool()
+    }
+}
+
+impl Deserialize for String {
+    fn deserialize(deserializer: &mut Deserializer, flag: Flag) -> Result<Self, String> {
+        deserializer.to_string(flag)
+    }
+}
+
+impl<T: Deserialize> Deserialize for Vec<T> {
+    fn deserialize(deserializer: &mut Deserializer, flag: Flag) -> Result<Self, String> {
+        let length = match flag {
+            Flag::FixedSize(n) => n,
+            _                  => try!(deserializer.to_var_int_any()).1 as usize,
+        };
+
+        let mut result = vec![];
+        for _ in 0..length {
+            result.push(try!(T::deserialize(deserializer, Flag::NoFlag)));
+        }
+
+        Ok(result)
+    }
+}
+
+impl<T:Deserialize, U: Deserialize> Deserialize for (T, U) {
+    fn deserialize(deserializer: &mut Deserializer, flag: Flag) -> Result<Self, String> {
+        let first  = try!(T::deserialize(deserializer, flag));
+        let second = try!(U::deserialize(deserializer, flag));
+
+        Ok((first, second))
+    }
+}
+
+
+impl Deserialize for Services {
+    fn deserialize(deserializer: &mut Deserializer, _:Flag) -> Result<Self, String> {
+        let data = try!(u64::deserialize(deserializer, Flag::NoFlag));
+        Ok(Services::new(data == 1))
+    }
+}
+
+impl<'a> Deserializer<'a> {
+    pub fn into_inner(self) -> &'a [u8] {
+        self.buffer.into_inner()
+    }
+
+    pub fn new(buffer: &[u8]) -> Deserializer {
+        Deserializer {
+            buffer: Cursor::new(buffer),
         }
     }
 
-    fn read(buffer: &mut Cursor<Vec<u8>>, out: &mut [u8]) -> Result<(), String> {
-        buffer.read_exact(out).map_err(|e| format!("Error: {:?}", e))
+    fn read(&mut self, out: &mut [u8]) -> Result<(), String> {
+        self.buffer.read_exact(out).map_err(|e| format!("Error: {:?}", e))
     }
 
-    fn get_bytes(size: usize, buffer: &mut Cursor<Vec<u8>>) -> Result<Data, String> {
-        assert!(size < 256);
+    pub fn to_i(&mut self, size: usize) -> Result<i64, String> {
+        assert!(size == 1 || size == 2 || size == 4 || size == 8);
 
-        let mut buff = [0; 256];
-        try!(Data::read(buffer, &mut buff[0..size]));
+        let mut data = [0; 8];
+        try!(self.read(&mut data[0..size]));
 
-        let mut result = vec![];
-        result.extend(buff[0..size].into_iter());
+        let sign     = data[size-1] & 0x80;
+        data[size-1] = data[size-1] & 0x7F;
 
-        Ok(Data::Bytes(result))
+        let unsigned = self.to_u_slice(&data[0..size]) as i64;
+
+        if sign > 0 {
+            Ok(unsigned * -1)
+        } else {
+            Ok(unsigned)
+        }
     }
 
-    fn to_u_slice(data: &[u8]) -> u64 {
+    fn to_u_slice(&self, data: &[u8]) -> u64 {
         let mut result = 0;
         let mut multiplier: u64 = 1;
 
@@ -337,89 +424,79 @@ impl Data {
         result
     }
 
-    fn to_u(buffer: &mut Cursor<Vec<u8>>, size: usize) -> Result<u64, String> {
+    pub fn to_u_fixed(&mut self, size: usize) -> Result<u64, String> {
         assert!(size == 1 || size == 2 || size == 4 || size == 8);
 
         let mut data = [0; 8];
-        try!(Data::read(buffer, &mut data[0..size]));
+        try!(self.read(&mut data[0..size]));
 
-        Ok(Data::to_u_slice(&data[0..size]))
+        Ok(self.to_u_slice(&data[0..size]))
     }
 
-    fn get_ip(buffer: &mut Cursor<Vec<u8>>) -> Result<Data, String> {
-        let mut data = [0; 16];
-        try!(Data::read(buffer, &mut data));
-
-        let mut s = [0u16; 8];
-        for i in 0..8 {
-            // IPs are big-endian so we need to swap the bytes
-            s[i] = Data::to_u_slice(&[data[2*i + 1], data[2*i]]) as u16;
+    pub fn to_u(&mut self, size: usize, flag: Flag) -> Result<u64, String> {
+        if flag == Flag::VariableSize {
+            self.to_var_int(size)
+        } else {
+            self.to_u_fixed(size)
         }
-
-        let ip = Ipv6Addr::new(s[0], s[1], s[2], s[3], s[4], s[5], s[6], s[7]);
-
-        Ok(Data::Ip(ip))
     }
 
-    fn to_var_int(buffer: &mut Cursor<Vec<u8>>) -> Result<u64, String> {
+    pub fn to_var_int_any(&mut self) -> Result<(usize, u64), String> {
         let mut data = [0; 1];
-        try!(Data::read(buffer, &mut data));
+        try!(self.read(&mut data));
 
         if data[0] < 0xfd {
-            return Ok(data[0] as u64);
+            return Ok((1, data[0] as u64));
         }
 
         let bytes = match data[0] {
             0xfd => 2,
             0xfe => 4,
             0xff => 8,
-            _ => unreachable!(),
+            _    => 0,
         };
 
-        Data::to_u(buffer, bytes)
+        Ok((bytes, try!(self.to_u_fixed(bytes))))
     }
 
+    pub fn to_var_int(&mut self, size: usize) -> Result<u64, String> {
+        let (bytes, result) = try!(self.to_var_int_any());
 
-    fn get_be_u16(buffer: &mut Cursor<Vec<u8>>) -> Result<Data, String> {
+        if size == bytes {
+            Ok(result)
+        } else {
+            Err(format!("Wrong size var_int: was {}, expected {}", bytes, size))
+        }
+    }
+
+    pub fn get_be_u16(&mut self) -> Result<u16, String> {
         let mut data = [0; 2];
-        try!(Data::read(buffer, &mut data));
+        try!(self.read(&mut data));
 
-        let result = Data::to_u_slice(&[data[1], data[0]]);
-        Ok(Data::Unsigned(result))
+        let result = self.to_u_slice(&[data[1], data[0]]);
+        Ok(result as u16)
     }
 
-    fn get_var_int(buffer: &mut Cursor<Vec<u8>>) -> Result<Data, String> {
-        let data = try!(Data::to_var_int(buffer));
-        Ok(Data::Unsigned(data))
-    }
+    fn to_ip(&mut self) -> Result<Ipv6Addr, String> {
+        let mut data = [0; 16];
+        try!(self.read(&mut data));
 
-    fn to_var_string(buffer: &mut Cursor<Vec<u8>>) -> Result<String, String> {
-        let length = try!(Data::to_var_int(buffer)) as usize;
-        if length > 1024 {
-            return Err(format!("String is too long, length={}", length));
+        let mut s = [0u16; 8];
+        for i in 0..8 {
+            // IPs are big-endian so we need to swap the bytes
+            s[i] = self.to_u_slice(&[data[2*i + 1], data[2*i]]) as u16;
         }
 
-        let mut bytes = [0; 1024];
-        try!(Data::read(buffer, &mut bytes[0..length]));
-
-        let mut bytes_vector = vec![];
-        bytes_vector.extend(bytes[0..length].into_iter());
-
-        String::from_utf8(bytes_vector).map_err(|e| format!("Error: {:?}", e))
+        Ok(Ipv6Addr::new(s[0], s[1], s[2], s[3], s[4], s[5], s[6], s[7]))
     }
 
-    fn get_var_string(buffer: &mut Cursor<Vec<u8>>) -> Result<Data, String> {
-        let data = try!(Data::to_var_string(buffer));
-        Ok(Data::VarString(data))
+    pub fn to_short_time(&mut self) -> Result<time::Tm, String> {
+        let sec = try!(self.to_u_fixed(4));
+        Ok(time::at_utc(time::Timespec::new(sec as i64, 0)))
     }
 
-    fn get_short_time(buffer: &mut Cursor<Vec<u8>>) -> Result<Data, String> {
-        let sec = try!(Data::to_u(buffer, 4));
-        Ok(Data::Time(time::at_utc(time::Timespec::new(sec as i64, 0))))
-    }
-
-    fn get_time(buffer: &mut Cursor<Vec<u8>>) -> Result<Data, String> {
-        let sec = try!(Data::to_i(buffer, 8));
+    pub fn to_time(&mut self) -> Result<time::Tm, String> {
+        let sec = try!(self.to_i(8));
         // Somewhere around 2033 this will break
         // unfortunately time::Tm crashes with an invalid time :-(
         // so we need to do some validation.
@@ -427,285 +504,48 @@ impl Data {
         if sec < 0 || sec > 2000000000 {
             Err(format!("Invalid time sec={}", sec))
         } else {
-            Ok(Data::Time(time::at_utc(time::Timespec::new(sec, 0))))
+            Ok(time::at_utc(time::Timespec::new(sec, 0)))
         }
     }
 
-    fn to_i(buffer: &mut Cursor<Vec<u8>>, size: usize) -> Result<i64, String> {
-        assert!(size == 1 || size == 2 || size == 4 || size == 8);
+    pub fn to_bool(&mut self) -> Result<bool, String> {
+        let data = try!(self.to_u_fixed(1));
+        Ok(data != 0)
+    }
 
-        let mut data = [0; 8];
-        try!(Data::read(buffer, &mut data[0..size]));
+    fn to_string(&mut self, flag: Flag) -> Result<String, String> {
+        let length = match flag {
+            Flag::FixedSize(n) => n,
+            _                  => try!(self.to_var_int_any()).1 as usize,
+        };
 
-        let sign     = data[size-1] & 0x80;
-        data[size-1] = data[size-1] & 0x7F;
-
-        let unsigned = Data::to_u_slice(&data[0..size]) as i64;
-
-        if sign > 0 {
-            Ok(unsigned * -1)
-        } else {
-            Ok(unsigned)
+        if length > 1024 {
+            return Err(format!("String is too long, length={}", length));
         }
-    }
 
-    fn get_i64(buffer: &mut Cursor<Vec<u8>>) -> Result<Data, String> {
-        let data = try!(Data::to_i(buffer, 8));
-        Ok(Data::Signed(data))
-    }
+        let mut bytes = [0; 1024];
+        try!(self.read(&mut bytes[0..length]));
 
-    fn get_i32(buffer: &mut Cursor<Vec<u8>>) -> Result<Data, String> {
-        let data = try!(Data::to_i(buffer, 4));
-        Ok(Data::Signed(data))
-    }
+        let mut bytes_vector = vec![0; length];
+        bytes_vector.extend(bytes[0..length].into_iter());
 
-    fn get_u64(buffer: &mut Cursor<Vec<u8>>) -> Result<Data, String> {
-        let data = try!(Data::to_u(buffer, 8));
-        Ok(Data::Unsigned(data))
-    }
-
-    fn get_u32(buffer: &mut Cursor<Vec<u8>>) -> Result<Data, String> {
-        let data = try!(Data::to_u(buffer, 4));
-        Ok(Data::Unsigned(data))
-    }
-
-    fn get_u16(buffer: &mut Cursor<Vec<u8>>) -> Result<Data, String> {
-        let data = try!(Data::to_u(buffer, 2));
-        Ok(Data::Unsigned(data))
-    }
-
-    fn get_bool(buffer: &mut Cursor<Vec<u8>>) -> Result<Data, String> {
-        let data = try!(Data::to_u(buffer, 1));
-        Ok(Data::Bool(data != 0))
-    }
-
-    fn get_u8(buffer: &mut Cursor<Vec<u8>>) -> Result<Data, String> {
-        let data = try!(Data::to_u(buffer, 1));
-        Ok(Data::Unsigned(data))
-    }
-
-    pub fn value_u(&self) -> Result<u64, String> {
-        match self {
-            &Data::Unsigned(x) => Ok(x),
-            _                  => Err(format!("{:?} is not an unsigned.", self)),
-        }
-    }
-
-    pub fn value_i(&self) -> Result<i64, String> {
-        match self {
-            &Data::Signed(x) => Ok(x),
-            _                => Err(format!("{:?} is not a signed.", self)),
-        }
-    }
-
-    pub fn value_time(&self) -> Result<time::Tm, String> {
-        match self {
-            &Data::Time(x) => Ok(x),
-            _              => Err(format!("{:?} is not a time.", self)),
-        }
-    }
-
-    pub fn value_bytes(&self) -> Result<&Vec<u8>, String> {
-        match self {
-            &Data::Bytes(ref x) => Ok(x),
-            _                   => Err(format!("{:?} is not bytes.", self)),
-        }
-    }
-
-    pub fn value_string(&self) -> Result<&str, String> {
-        match self {
-            &Data::VarString(ref x) => Ok(x),
-            _                       => Err(format!("{:?} is not bytes.", self)),
-        }
-    }
-
-    pub fn value_bool(&self) -> Result<bool, String> {
-        match self {
-            &Data::Bool(x) => Ok(x),
-            _              => Err(format!("{:?} is not a bool.", self)),
-        }
-    }
-
-    pub fn value_ip(&self) -> Result<&Ipv6Addr, String> {
-        match self {
-            &Data::Ip(ref x) => Ok(x),
-            _                => Err(format!("{:?} is not an ip.", self)),
-        }
+        String::from_utf8(bytes_vector).map_err(|e| format!("Error: {:?}", e))
     }
 }
 
-#[derive(Debug)]
-pub enum ContainerType {
-    Base(BasicType),
-    Struct(&'static [BasicType]),
-    // The index must be an unsigned type
-    VarArray(BasicType, &'static [BasicType]),
-    FixedArray(usize, &'static [BasicType]),
-}
-
-#[derive(Debug)]
-pub enum ContainerData {
-    Base(Data),
-    Struct(Vec<Data>),
-    Array(Vec<Vec<Data>>),
-}
-
-impl ContainerData {
-    pub fn unwrap(&self) -> Result<&Data, String> {
-        match self {
-            &ContainerData::Base(ref x) => Ok(x),
-            _                           => Err(format!("{:?} is not a base", self)),
-        }
-    }
-
-    pub fn unwrap_struct(&self) -> Result<&Vec<Data>, String> {
-        match self {
-            &ContainerData::Struct(ref x) => Ok(x),
-            _                             => Err(format!("{:?} is not a struct", self)),
-        }
-    }
-
-    pub fn unwrap_array(&self) -> Result<&Vec<Vec<Data>>, String> {
-        match self {
-            &ContainerData::Array(ref x) => Ok(x),
-            _                            => Err(format!("{:?} is not an array", self)),
-        }
-    }
-
-    fn get_array(definition: &[BasicType], size: usize,
-                 buffer: &mut Cursor<Vec<u8>>) -> Result<Vec<Vec<Data>>, String> {
-        let mut data = vec![];
-        for _ in 0..size {
-            let mut struct_data = vec![];
-            for type_ in definition {
-                let el = try!(Data::deserialize(type_, buffer));
-                struct_data.push(el);
-            }
-
-            data.push(struct_data);
-        }
-
-        Ok(data)
-    }
-
-    pub fn deserialize(container_type: &ContainerType,
-                       buffer: &mut Cursor<Vec<u8>>) -> Result<ContainerData, String> {
-        match container_type {
-            &ContainerType::Base(ref x) => {
-                let data = try!(Data::deserialize(x, buffer));
-                Ok(ContainerData::Base(data))
-            },
-            &ContainerType::VarArray(ref index_type, ref types) => {
-                let size_wrapped = try!(Data::deserialize(index_type, buffer));
-
-                let size = match size_wrapped {
-                    Data::Unsigned(x) => x as usize,
-                    _                 => unreachable!() // only unsigned is allowed
-                };
-
-                let data = try!(ContainerData::get_array(types, size, buffer));
-                Ok(ContainerData::Array(data))
-            },
-            &ContainerType::FixedArray(size, ref types) => {
-                let data = try!(ContainerData::get_array(types, size, buffer));
-                Ok(ContainerData::Array(data))
-            },
-            &ContainerType::Struct(ref element_type) => {
-                let data = try!(ContainerData::get_array(element_type, 1, buffer))
-                    .swap_remove(0);
-
-                Ok(ContainerData::Struct(data))
-            }
-        }
-    }
-}
-
-#[derive(Debug)]
-struct Message {
-    definition: &'static [ContainerType],
-    data: Vec<ContainerData>,
-}
-
-impl Message {
-    fn deserialize(buffer: &mut Cursor<Vec<u8>>,
-                   definition: &'static [ContainerType]) -> Result<Message, String> {
-        let mut data = vec![];
-        for el in definition.iter() {
-            let el_data = try!(ContainerData::deserialize(&el, buffer));
-            data.push(el_data);
-        }
-
-        Ok(Message {
-            definition: definition,
-            data: data,
-        })
-    }
-
-    fn get(&self, index: usize) -> Result<&ContainerData, String> {
-        self.data.get(index).ok_or(format!("There's no data at {}", index))
-    }
-
-    pub fn get_array(&self, index: usize) -> Result<&Vec<Vec<Data>>, String> {
-        self.get(index).and_then(|s| s.unwrap_array())
-    }
-
-    pub fn unwrap_at(&self, index: usize) -> Result<&Data, String> {
-        self.get(index).and_then(|d| d.unwrap())
-    }
-
-    pub fn get_struct(&self, index: usize) -> Result<&Vec<Data>, String> {
-        self.get(index).and_then(|s| s.unwrap_struct())
-    }
-
-    pub fn get_string(&self, index: usize) -> Result<String, String> {
-        self.unwrap_at(index).and_then(|d| d.value_string())
-                             .and_then(|d| Ok(d.to_string()))
-    }
-
-    pub fn get_bool(&self, index: usize) -> Result<bool, String> {
-        self.unwrap_at(index).and_then(|d| d.value_bool())
-    }
-
-    pub fn get_time(&self, index: usize) -> Result<time::Tm, String> {
-        self.unwrap_at(index).and_then(|d| d.value_time())
-    }
-
-    pub fn get_u8(&self, index: usize) -> Result<u8, String> {
-        self.unwrap_at(index).and_then(|d| d.value_u())
-            .and_then(|d| Ok(d as u8))
-    }
-
-    pub fn get_u32(&self, index: usize) -> Result<u32, String> {
-        self.unwrap_at(index).and_then(|d| d.value_u())
-            .and_then(|d| Ok(d as u32))
-    }
-
-    pub fn get_u64(&self, index: usize) -> Result<u64, String> {
-        self.unwrap_at(index).and_then(|d| d.value_u())
-    }
-
-    pub fn get_i32(&self, index: usize) -> Result<i32, String> {
-        self.unwrap_at(index).and_then(|d| d.value_i())
-            .and_then(|d| Ok(d as i32))
-    }
-
-    pub fn get_bytes(&self, index: usize) -> Result<&Vec<u8>, String> {
-        self.unwrap_at(index).and_then(|d| d.value_bytes())
-    }
-}
-
-impl Command {
-    pub fn from_bytes(data: &[u8]) -> Command {
-        match data {
-            b"version\0\0\0\0\0"    => Command::Version,
-            b"verack\0\0\0\0\0\0"   => Command::Verack,
-            b"ping\0\0\0\0\0\0\0\0" => Command::Ping,
-            b"pong\0\0\0\0\0\0\0\0" => Command::Pong,
-            b"getaddr\0\0\0\0\0"    => Command::GetAddr,
-            b"addr\0\0\0\0\0\0\0\0" => Command::Addr,
-            b"reject\0\0\0\0\0\0"   => Command::Reject,
-            b"getheaders\0\0"       => Command::GetHeaders,
-            _                       => Command::Unknown,
+impl Deserialize for Command {
+    fn deserialize(deserializer: &mut Deserializer, _: Flag) -> Result<Self, String> {
+        let data = try!(String::deserialize(deserializer, Flag::FixedSize(12)));
+        match data.as_str() {
+            "version\0\0\0\0\0"    => Ok(Command::Version),
+            "verack\0\0\0\0\0\0"   => Ok(Command::Verack),
+            "ping\0\0\0\0\0\0\0\0" => Ok(Command::Ping),
+            "pong\0\0\0\0\0\0\0\0" => Ok(Command::Pong),
+            "getaddr\0\0\0\0\0"    => Ok(Command::GetAddr),
+            "addr\0\0\0\0\0\0\0\0" => Ok(Command::Addr),
+            "reject\0\0\0\0\0\0"   => Ok(Command::Reject),
+            "getheaders\0\0"       => Ok(Command::GetHeaders),
+            _                      => Err(format!("Unkown command: {}", data)),
         }
     }
 }
@@ -728,14 +568,15 @@ impl Serialize for Command {
     }
 }
 
-impl NetworkType {
-    pub fn from_magic(data: u32) -> NetworkType {
+impl Deserialize for NetworkType {
+    fn deserialize(deserializer: &mut Deserializer, _: Flag) -> Result<Self, String> {
+        let data = try!(u32::deserialize(deserializer, Flag::NoFlag));
         match data {
-            0xD9B4BEF9 => NetworkType::Main,
-            0xDAB5BFFA => NetworkType::TestNet,
-            0x0709110B => NetworkType::TestNet3,
-            0xFEB4BEF9 => NetworkType::NameCoin,
-            _          => NetworkType::Unknown,
+            0xD9B4BEF9 => Ok(NetworkType::Main),
+            0xDAB5BFFA => Ok(NetworkType::TestNet),
+            0x0709110B => Ok(NetworkType::TestNet3),
+            0xFEB4BEF9 => Ok(NetworkType::NameCoin),
+            _          => Err(format!("Unrecognized magic number {}", data)),
         }
     }
 }
@@ -756,19 +597,18 @@ impl Serialize for NetworkType {
     }
 }
 
-const MESSAGE_HEADER: &'static [ContainerType; 4]  = &[
-     ContainerType::Base(BasicType::FixedU32),
-     ContainerType::Base(BasicType::Bytes(12)),
-     ContainerType::Base(BasicType::FixedU32),
-     ContainerType::Base(BasicType::Bytes(4)),
-];
-
 #[derive(PartialEq, Debug)]
 pub struct MessageHeader {
     network_type: NetworkType,
     command: Command,
     length: u32,
     checksum: Vec<u8>,
+}
+
+impl MessageHeader {
+    pub fn len(&self) -> u32 { self.length }
+    pub fn magic(&self) -> &NetworkType { &self.network_type }
+    pub fn command(&self) -> &Command { &self.command }
 }
 
 impl Serialize for MessageHeader {
@@ -780,50 +620,16 @@ impl Serialize for MessageHeader {
     }
 }
 
-impl MessageHeader {
-    pub fn deserialize(buffer: &mut Cursor<Vec<u8>>) -> Result<MessageHeader, String> {
-        let message = try!(Message::deserialize(buffer, MESSAGE_HEADER));
-
+impl Deserialize for MessageHeader {
+    fn deserialize(deserializer: &mut Deserializer, _: Flag) -> Result<Self, String> {
         Ok(MessageHeader {
-            network_type: NetworkType::from_magic(try!(message.get_u32(0))),
-            command:      Command::from_bytes(try!(message.get_bytes(1))),
-            length:       try!(message.get_u32(2)),
-            checksum:     try!(message.get_bytes(3)).clone(),
+            network_type: try!(NetworkType::deserialize(deserializer, Flag::NoFlag)),
+            command:          try!(Command::deserialize(deserializer, Flag::NoFlag)),
+            length:               try!(u32::deserialize(deserializer, Flag::NoFlag)),
+            checksum: try!(<Vec<u8> as Deserialize>::deserialize(deserializer, Flag::FixedSize(4))),
         })
     }
-
-    pub fn len(&self) -> u32 { self.length }
-    pub fn magic(&self) -> &NetworkType { &self.network_type }
-    pub fn command(&self) -> &Command { &self.command }
 }
-
-
-const IP_STRUCT_TIME: &'static [BasicType; 4] =
-&[
-    BasicType::ShortTime,
-    BasicType::FixedU64,
-    BasicType::Ip,
-    BasicType::FixedBEU16
-];
-
-const IP_STRUCT: &'static [BasicType; 3] =
-&[
-    BasicType::FixedU64,
-    BasicType::Ip,
-    BasicType::FixedBEU16
-];
-
-const VERSION_MESSAGE: &'static [ContainerType; 9]  = &[
-     ContainerType::Base(BasicType::FixedI32),
-     ContainerType::Base(BasicType::FixedU64),
-     ContainerType::Base(BasicType::Time),
-     ContainerType::Struct(IP_STRUCT),
-     ContainerType::Struct(IP_STRUCT),
-     ContainerType::Base(BasicType::FixedU64),
-     ContainerType::Base(BasicType::VarString),
-     ContainerType::Base(BasicType::FixedI32),
-     ContainerType::Base(BasicType::Bool),
-];
 
 #[derive(Debug, PartialEq)]
 pub struct VersionMessage {
@@ -852,26 +658,21 @@ impl Serialize for VersionMessage {
     }
 }
 
-impl VersionMessage {
-    pub fn deserialize(buffer: &mut Cursor<Vec<u8>>) -> Result<VersionMessage, String> {
-        let message = try!(Message::deserialize(buffer, VERSION_MESSAGE));
+impl Deserialize for VersionMessage {
+    fn deserialize(deserializer: &mut Deserializer, _: Flag) -> Result<Self, String> {
         Ok(VersionMessage {
-            version:      try!(message.get_i32(0)),
-            services:     try!(Services::from_data(try!(message.unwrap_at(1)))),
-            timestamp:    try!(message.get_time(2)),
-            addr_recv:    try!(IPAddress::from_data(try!(message.get_struct(3)))),
-            addr_from:    try!(IPAddress::from_data(try!(message.get_struct(4)))),
-            nonce:        try!(message.get_u64(5)),
-            user_agent:   try!(message.get_string(6)),
-            start_height: try!(message.get_i32(7)),
-            relay:        try!(message.get_bool(8)),
+            version:            try!(i32::deserialize(deserializer, Flag::NoFlag)),
+            services:      try!(Services::deserialize(deserializer, Flag::NoFlag)),
+            timestamp:     try!(time::Tm::deserialize(deserializer, Flag::NoFlag)),
+            addr_recv:    try!(IPAddress::deserialize(deserializer, Flag::NoFlag)),
+            addr_from:    try!(IPAddress::deserialize(deserializer, Flag::NoFlag)),
+            nonce:              try!(u64::deserialize(deserializer, Flag::NoFlag)),
+            user_agent:      try!(String::deserialize(deserializer, Flag::VariableSize)),
+            start_height:       try!(i32::deserialize(deserializer, Flag::NoFlag)),
+            relay:             try!(bool::deserialize(deserializer, Flag::NoFlag)),
         })
     }
 }
-
-const PING_MESSAGE: &'static [ContainerType; 1]  = &[
-     ContainerType::Base(BasicType::FixedU64),
-];
 
 #[derive(Debug)]
 pub struct PingMessage {
@@ -884,23 +685,30 @@ impl Serialize for PingMessage {
     }
 }
 
-impl PingMessage {
-    pub fn deserialize(buffer: &mut Cursor<Vec<u8>>) -> Result<PingMessage, String> {
-        let message = try!(Message::deserialize(buffer, PING_MESSAGE));
+impl Deserialize for PingMessage {
+    fn deserialize(deserializer: &mut Deserializer, _: Flag) -> Result<Self, String> {
         Ok(PingMessage {
-            nonce: try!(message.get_u64(0)),
+            nonce: try!(u64::deserialize(deserializer, Flag::NoFlag)),
         })
     }
+}
 
+impl PingMessage {
     pub fn nonce(&self) -> u64 { self.nonce }
 }
 
-const ADDR_MESSAGE: &'static [ContainerType; 1] = &[
-    ContainerType::VarArray(BasicType::VarInt, IP_STRUCT_TIME),
-];
-
 pub struct AddrMessage {
     pub addr_list: Vec<(time::Tm, IPAddress)>,
+}
+
+type AddrList = Vec<(time::Tm, IPAddress)>;
+
+impl Deserialize for AddrMessage {
+    fn deserialize(deserializer: &mut Deserializer, _: Flag) -> Result<Self, String> {
+        Ok(AddrMessage {
+            addr_list: try!(AddrList::deserialize(deserializer, Flag::ShortFormat)),
+        })
+    }
 }
 
 impl Serialize for AddrMessage {
@@ -915,36 +723,7 @@ impl AddrMessage {
             addr_list: addr_list,
         }
     }
-
-    pub fn deserialize(buffer: &mut Cursor<Vec<u8>>) -> Result<AddrMessage, String> {
-        let message = try!(Message::deserialize(buffer, ADDR_MESSAGE));
-        let data = try!(message.get_array(0));
-
-        let mut addr_list = vec![];
-        for el in data {
-            if el.len() != 4 {
-                return Err(format!("Not a valid address {:?}", el));
-            }
-
-            addr_list.push((
-                    try!(el.get(0).unwrap().value_time()),
-                    IPAddress::new(
-                        try!(Services::from_data(el.get(1).unwrap())),
-                        *try!(el.get(2).unwrap().value_ip()),
-                        try!(el.get(3).unwrap().value_u()) as u16)));
-        }
-
-        Ok(AddrMessage {
-            addr_list: addr_list,
-        })
-    }
 }
-
-const REJECT_MESSAGE: &'static [ContainerType; 3] = &[
-    ContainerType::Base(BasicType::VarString),
-    ContainerType::Base(BasicType::FixedU8),
-    ContainerType::Base(BasicType::VarString),
-];
 
 #[derive(Debug)]
 pub struct RejectMessage {
@@ -961,14 +740,12 @@ impl Serialize for RejectMessage {
     }
 }
 
-impl RejectMessage {
-    pub fn deserialize(buffer: &mut Cursor<Vec<u8>>) -> Result<RejectMessage, String> {
-        let message = try!(Message::deserialize(buffer, REJECT_MESSAGE));
-
+impl Deserialize for RejectMessage {
+    fn deserialize(deserializer: &mut Deserializer, _: Flag) -> Result<Self, String> {
         Ok(RejectMessage {
-            message: try!(message.get_string(0)),
-            ccode:   try!(message.get_u8(1)),
-            reason:  try!(message.get_string(2)),
+            message: try!(String::deserialize(deserializer, Flag::VariableSize)),
+            ccode:       try!(u8::deserialize(deserializer, Flag::NoFlag)),
+            reason:  try!(String::deserialize(deserializer, Flag::VariableSize)),
         })
     }
 }
@@ -999,9 +776,6 @@ pub fn get_serialized_message(network_type: NetworkType,
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use super::Message;
-    use std::io::Cursor;
 
     #[test]
     fn test() {
@@ -1029,17 +803,5 @@ mod tests {
                  0xC0, 0x3E, 0x03, 0x00,
                  // relay
                  0x01];
-
-        println!("{:?}", Message::deserialize(&mut Cursor::new(buffer), super::VERSION_MESSAGE));
-        assert!(false);
-    }
-
-    #[test]
-    fn test_u64() {
-        let buffer = vec![0xDB, 0xFA, 0x6F, 0x98, 0xC9, 0xDE, 0xDF, 0xC5];
-        let data = Data::deserialize(&BasicType::FixedU64, &mut Cursor::new(buffer));
-
-        println!("{:?}", data);
-        panic!();
     }
 }

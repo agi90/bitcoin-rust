@@ -17,7 +17,6 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Mutex, MutexGuard, Arc};
 use std::thread;
 use std::mem;
-use std::io::Cursor;
 
 use mio::Token;
 
@@ -155,25 +154,24 @@ impl BitcoinClient {
     fn lock_state<'a>(&'a self) -> MutexGuard<'a, State> { self.state.lock().unwrap() }
 
     fn handle_command(&mut self, header: MessageHeader, token: mio::Token,
-                      message_bytes_: &mut Cursor<Vec<u8>>) -> Result<(), String> {
+                      message_bytes: &mut Deserializer) -> Result<(), String> {
         if *header.magic() != self.lock_state().network_type {
             // This packet is not for the right version :O
             return Err(format!("Error: Received packet for wrong version. {:?}", header.magic()));
         }
 
-        let mut message_bytes = message_bytes_;
         match header.command() {
             &Command::Pong => {
                 // Ping and Pong message use the same format
-                let message = try!(PingMessage::deserialize(message_bytes));
+                let message = try!(PingMessage::deserialize(message_bytes, Flag::NoFlag));
                 self.handle_pong(message);
             },
             &Command::Ping => {
-                let message = try!(PingMessage::deserialize(message_bytes));
+                let message = try!(PingMessage::deserialize(message_bytes, Flag::NoFlag));
                 self.handle_ping(message);
             },
             &Command::Version => {
-                let message = try!(VersionMessage::deserialize(message_bytes));
+                let message = try!(VersionMessage::deserialize(message_bytes, Flag::NoFlag));
                 self.handle_version(token, message);
             },
             &Command::Verack => {
@@ -189,11 +187,11 @@ impl BitcoinClient {
                 return Err(format!("Unknown message. {:?}", message_bytes));
             },
             &Command::Addr => {
-                let message = try!(AddrMessage::deserialize(message_bytes));
+                let message = try!(AddrMessage::deserialize(message_bytes, Flag::NoFlag));
                 self.handle_addr(message);
             },
             &Command::Reject => {
-                let message = try!(RejectMessage::deserialize(message_bytes));
+                let message = try!(RejectMessage::deserialize(message_bytes, Flag::NoFlag));
                 self.handle_reject(message);
             }
         };
@@ -204,9 +202,9 @@ impl BitcoinClient {
 
 impl rpcengine::MessageHandler for BitcoinClient {
     fn handle(&mut self, token: mio::Token, message: Vec<u8>) -> VecDeque<Vec<u8>> {
-        let mut cursor = Cursor::new(message);
-        let handled = MessageHeader::deserialize(&mut cursor)
-            .map(|m| self.handle_command(m, token, &mut cursor));
+        let mut deserializer = Deserializer::new(&message[..]);
+        let handled = MessageHeader::deserialize(&mut deserializer, Flag::NoFlag)
+            .map(|m| self.handle_command(m, token, &mut deserializer));
 
         if handled.is_err() {
            println!("Error: {:?}", handled);
