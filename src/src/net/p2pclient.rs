@@ -47,6 +47,7 @@ impl State {
     }
 
     pub fn queue_message(&mut self, command: Command, message: Option<Box<Serialize>>) {
+        println!("Sending {:?}", command);
         let to_send = get_serialized_message(self.network_type,
                                              command,
                                              message);
@@ -156,6 +157,7 @@ impl BitcoinClient {
     fn handle_command(&mut self, header: MessageHeader, token: mio::Token,
                       message_bytes: &mut Deserializer) -> Result<(), String> {
 
+        println!("{:?}", header);
         if *header.magic() != self.lock_state().network_type {
             // This packet is not for the right version :O
             return Err(format!("Received packet for wrong version: {:?}", header.magic()));
