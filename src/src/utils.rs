@@ -128,7 +128,7 @@ pub struct Debug;
 
 #[allow(dead_code)]
 impl Debug {
-    pub fn print_bytes(data: &Vec<u8>) {
+    pub fn print_bytes(data: &[u8]) {
         for d in data {
             print!("{:02X} ", d);
         }
