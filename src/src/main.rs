@@ -3,6 +3,8 @@
 mod utils;
 pub mod script;
 pub mod net;
+#[cfg(test)]
+mod test;
 
 extern crate crypto;
 extern crate regex;

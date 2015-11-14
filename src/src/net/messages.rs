@@ -41,6 +41,10 @@ pub enum Flag {
     ShortFormat,
 }
 
+type Bytes = Vec<u8>;
+type BlockHeaders = Vec<BlockHeader>;
+type AddrList = Vec<(time::Tm, IPAddress)>;
+
 pub trait Serialize {
     fn serialize(&self, serializer: &mut Serializer, flag: &[Flag]);
 }
@@ -218,12 +222,16 @@ impl<T: Serialize> Serialize for Vec<T> {
     fn serialize(&self, serializer: &mut Serializer, flags: &[Flag]) {
         let length = self.len();
 
-        if flags.contains(&Flag::VariableSize) {
+        if flags.get(0) == Some(&Flag::VariableSize) {
             serializer.var_int(length as u64);
         }
 
         for x in self {
-            x.serialize(serializer, &[]);
+            if flags.len() > 1 {
+                x.serialize(serializer, &flags[1..]);
+            } else {
+                x.serialize(serializer, &[]);
+            }
         }
     }
 }
@@ -357,16 +365,14 @@ fn extract_fixed_size(flags: &[Flag]) -> Option<usize> {
 
 impl<T: Deserialize> Deserialize for Vec<T> {
     fn deserialize(deserializer: &mut Deserializer, flags: &[Flag]) -> Result<Self, String> {
-        let length_ = extract_fixed_size(flags);
-
-        let length = match length_ {
-            Some(x) => x,
-            None    => try!(deserializer.to_var_int_any()).1 as usize,
-        };
-
+        let length = try!(deserializer.get_array_size(flags));
         let mut result = vec![];
         for _ in 0..length {
-            result.push(try!(T::deserialize(deserializer, &[])));
+            if flags.len() > 1 {
+                result.push(try!(T::deserialize(deserializer, &flags[1..])));
+            } else {
+                result.push(try!(T::deserialize(deserializer, &[])));
+            }
         }
 
         Ok(result)
@@ -399,6 +405,16 @@ impl<'a> Deserializer<'a> {
         Deserializer {
             buffer: Cursor::new(buffer),
         }
+    }
+
+    pub fn get_array_size(&mut self, flags: &[Flag]) -> Result<usize, String> {
+        let flag = flags.get(0)
+            .and_then(|f| if let &Flag::FixedSize(n) = f { Some(n) } else { None });
+
+        Ok(match flag {
+            Some(n) => n,
+            None => try!(self.to_var_int_any()).1 as usize,
+        })
     }
 
     fn read(&mut self, out: &mut [u8]) -> Result<(), String> {
@@ -612,10 +628,10 @@ impl Serialize for NetworkType {
 
 #[derive(PartialEq, Debug)]
 pub struct MessageHeader {
-    network_type: NetworkType,
-    command: Command,
-    length: u32,
-    checksum: Vec<u8>,
+    pub network_type: NetworkType,
+    pub command: Command,
+    pub length: u32,
+    pub checksum: Vec<u8>,
 }
 
 impl MessageHeader {
@@ -733,8 +749,6 @@ pub struct AddrMessage {
     pub addr_list: Vec<(time::Tm, IPAddress)>,
 }
 
-type AddrList = Vec<(time::Tm, IPAddress)>;
-
 impl Deserialize for AddrMessage {
     fn deserialize(deserializer: &mut Deserializer, _: &[Flag]) -> Result<Self, String> {
         Ok(AddrMessage {
@@ -782,6 +796,68 @@ impl Deserialize for RejectMessage {
     }
 }
 
+#[derive(Debug)]
+pub struct BlockHeader {
+    version: i32,
+    prev_block: Bytes,
+    merkle_root: Bytes,
+    timestamp: time::Tm,
+    bits: u32,
+    nonce: u32,
+    txn_count: u64,
+}
+
+impl Serialize for BlockHeader {
+    fn serialize(&self, serializer: &mut Serializer, _: &[Flag]) {
+        self.    version.serialize(serializer, &[]);
+        self. prev_block.serialize(serializer, &[]);
+        self.merkle_root.serialize(serializer, &[]);
+        self.  timestamp.serialize(serializer, &[]);
+        self.       bits.serialize(serializer, &[]);
+        self.      nonce.serialize(serializer, &[]);
+        self.  txn_count.serialize(serializer, &[Flag::VariableSize]);
+    }
+}
+
+impl Deserialize for BlockHeader {
+    fn deserialize(deserializer: &mut Deserializer, _: &[Flag]) -> Result<Self, String> {
+        Ok(BlockHeader {
+            version:        try!(i32::deserialize(deserializer, &[])),
+            prev_block:   try!(Bytes::deserialize(deserializer, &[Flag::FixedSize(32)])),
+            merkle_root:  try!(Bytes::deserialize(deserializer, &[Flag::FixedSize(32)])),
+            timestamp: try!(time::Tm::deserialize(deserializer, &[])),
+            bits:           try!(u32::deserialize(deserializer, &[])),
+            nonce:          try!(u32::deserialize(deserializer, &[])),
+            txn_count:      try!(u64::deserialize(deserializer, &[Flag::VariableSize])),
+        })
+    }
+}
+
+struct BlockHeadersMessage {
+    headers: BlockHeaders,
+}
+
+impl Serialize for BlockHeadersMessage {
+    fn serialize(&self, serializer: &mut Serializer, _: &[Flag]) {
+        self.headers.serialize(serializer, &[Flag::VariableSize]);
+    }
+}
+
+impl Deserialize for BlockHeadersMessage {
+    fn deserialize(deserializer: &mut Deserializer, _: &[Flag]) -> Result<Self, String> {
+        Ok(BlockHeadersMessage {
+            headers: try!(BlockHeaders::deserialize(deserializer, &[Flag::VariableSize])),
+        })
+    }
+}
+
+struct GetHeadersMessage {
+    version: u32,
+    hash_count: u64,
+    block_locators: Vec<Vec<u8>>,
+    hash_stop: Vec<u8>,
+}
+
 pub fn get_serialized_message(network_type: NetworkType,
                               command: Command,
                               message: Option<Box<Serialize>>) -> Vec<u8> {
@@ -804,103 +880,4 @@ pub fn get_serialized_message(network_type: NetworkType,
     result.extend(serializer.into_inner());
 
     result
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use super::super::*;
-    use utils::Debug;
-
-    #[test]
-    fn test_version_message() {
-        let buffer =
-            vec![// version
-                 0x62, 0xEA, 0x00, 0x00,
-                 // services
-                 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                 // timestamp
-                 0x11, 0xB2, 0xD0, 0x50, 0x00, 0x00, 0x00, 0x00,
-                 // addr_recv
-                 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF,
-                 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                 // addr_from
-                 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF,
-                 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                 // nonce
-                 0x3B, 0x2E, 0xB3, 0x5D, 0x8C, 0xE6, 0x17, 0x65,
-                 // user-agent string
-                 0x0F, 0x2F, 0x53, 0x61, 0x74, 0x6F, 0x73, 0x68, 0x69, 0x3A,
-                 0x30, 0x2E, 0x37, 0x2E, 0x32, 0x2F,
-                 // last block id
-                 0xC0, 0x3E, 0x03, 0x00];
-
-        let mut deserializer = Deserializer::new(&buffer[..]);
-        let message = VersionMessage::deserialize(&mut deserializer, &[]).unwrap();
-
-        assert_eq!(message.version, 60002);
-        assert_eq!(message.services, Services::new(true));
-        assert_eq!(message.user_agent, "/Satoshi:0.7.2/");
-        assert_eq!(message.start_height, 212672);
-        assert_eq!(message.relay, false);
-
-        let mut serializer = Serializer::new();
-        message.serialize(&mut serializer, &[]);
-
-        let result = serializer.into_inner();
-        Debug::print_bytes(&result);
-
-        assert_eq!(result, buffer);
-    }
-
-    #[test]
-    fn test_complete_message() {
-        let buffer = vec![
-             // magic number
-             0xF9, 0xBE, 0xB4, 0xD9,
-             // command
-             0x76, 0x65, 0x72, 0x73, 0x69, 0x6F, 0x6E, 0x00, 0x00, 0x00,
-             0x00, 0x00,
-             // message length
-             0x64, 0x00, 0x00, 0x00,
-             // checksum
-             0x3B, 0x64, 0x8D, 0x5A,
-
-             // version
-             0x62, 0xEA, 0x00, 0x00,
-             // services
-             0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-             // timestamp
-             0x11, 0xB2, 0xD0, 0x50, 0x00, 0x00, 0x00, 0x00,
-             // addr recv
-             0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF,
-             0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-             // addr from
-             0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF,
-             0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-             // nonce
-             0x3B, 0x2E, 0xB3, 0x5D, 0x8C, 0xE6, 0x17, 0x65,
-             // user-agent
-             0x0F, 0x2F, 0x53, 0x61, 0x74, 0x6F, 0x73, 0x68, 0x69, 0x3A,
-             0x30, 0x2E, 0x37, 0x2E, 0x32, 0x2F,
-             // last block height
-             0xC0, 0x3E, 0x03, 0x00];
-
-        let mut deserializer = Deserializer::new(&buffer[..]);
-        let header  = MessageHeader::deserialize(&mut deserializer, &[]).unwrap();
-        assert_eq!(header.network_type, NetworkType::Main);
-        assert_eq!(header.command, Command::Version);
-        assert_eq!(header.length, 100);
-
-        let message = VersionMessage::deserialize(&mut deserializer, &[]).unwrap();
-
-        let serialized = get_serialized_message(NetworkType::Main, Command::Version, Some(Box::new(message)));
-        Debug::print_bytes(&serialized);
-
-        assert_eq!(buffer, serialized);
-    }
 }
