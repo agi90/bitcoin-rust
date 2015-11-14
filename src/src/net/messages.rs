@@ -526,7 +526,7 @@ impl<'a> Deserializer<'a> {
         let mut bytes = [0; 1024];
         try!(self.read(&mut bytes[0..length]));
 
-        let mut bytes_vector = vec![0; length];
+        let mut bytes_vector = vec![];
         bytes_vector.extend(bytes[0..length].into_iter());
 
         String::from_utf8(bytes_vector).map_err(|e| format!("Error: {:?}", e))
