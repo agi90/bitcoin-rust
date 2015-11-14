@@ -776,6 +776,9 @@ pub fn get_serialized_message(network_type: NetworkType,
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use super::super::*;
+    use utils::Debug;
 
     #[test]
     fn test() {
@@ -803,5 +806,22 @@ mod tests {
                  0xC0, 0x3E, 0x03, 0x00,
                  // relay
                  0x01];
+
+        let mut deserializer = Deserializer::new(&buffer[..]);
+        let message = VersionMessage::deserialize(&mut deserializer, Flag::NoFlag).unwrap();
+
+        assert_eq!(message.version, 60002);
+        assert_eq!(message.services, Services::new(true));
+        assert_eq!(message.user_agent, "/Satoshi:0.7.2/");
+        assert_eq!(message.start_height, 212672);
+        assert_eq!(message.relay, true);
+
+        let mut serializer = Serializer::new();
+        message.serialize(&mut serializer, Flag::NoFlag);
+
+        let result = serializer.into_inner();
+        Debug::print_bytes(&result);
+
+        assert_eq!(result, buffer);
     }
 }

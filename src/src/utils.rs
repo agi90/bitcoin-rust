@@ -175,9 +175,9 @@ mod tests {
     use super::*;
     use rustc_serialize::base64::FromBase64;
 
-    fn test_hash(hash: &Fn(Vec<u8>) -> Vec<u8>, input: &str, expected: &str) {
-        let output = hash(input.from_base64().unwrap());
-        assert_eq!(output, expected.from_base64().unwrap());
+    fn test_hash(hash: &Fn(&[u8]) -> [u8;20], input: &str, expected: &str) {
+        let output = hash(input.from_base64().unwrap().as_slice());
+        assert_eq!(&output[..], expected.from_base64().unwrap().as_slice());
     }
 
     #[test]
@@ -185,12 +185,5 @@ mod tests {
         test_hash(&CryptoUtils::ripemd160, "MQ==", "xHkHq9KoBJLKk4iwXA44JRj/OWA=");
         test_hash(&CryptoUtils::ripemd160, "dGVzdA==", "XlL+5H5rBwVl90NyRozcaZ3okQc=");
         test_hash(&CryptoUtils::ripemd160, "dGVzdF8y", "rwwVga+QLGzlz74RtoOwUT/L6Bw=");
-    }
-
-    #[test]
-    fn test_sha256() {
-        test_hash(&CryptoUtils::sha256, "MQ==", "a4ayc/80/OGda4BO/1o/V0etpOqiLx1JwB5S3beHW0s=");
-        test_hash(&CryptoUtils::sha256, "dGVzdA==", "n4bQgYhMfWWaL+qgxVrQFaO/TxsrC4Is0V1sFbDwCgg=");
-        test_hash(&CryptoUtils::sha256, "dGVzdF8y", "oQnb2DKAEyn4QJvuKEUCStTOqfAz+lwr0XfG/T54ZYc=");
     }
 }
