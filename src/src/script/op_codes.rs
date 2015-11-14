@@ -257,28 +257,28 @@ pub fn op_within(context: Context) -> Context {
 pub fn op_sha256(context: Context) -> Context {
     stack_op(context, |st| {
         let last = st.pop().unwrap();
-        st.push(CryptoUtils::sha256(last));
+        st.push(CryptoUtils::sha256(&last).to_vec());
     })
 }
 
 pub fn op_sha1(context: Context) -> Context {
     stack_op(context, |st| {
         let last = st.pop().unwrap();
-        st.push(CryptoUtils::sha1(last));
+        st.push(CryptoUtils::sha1(&last).to_vec());
     })
 }
 
 pub fn op_hash256(context: Context) -> Context {
     stack_op(context, |st| {
         let last = st.pop().unwrap();
-        st.push(CryptoUtils::sha256(CryptoUtils::sha256(last)));
+        st.push(CryptoUtils::sha256(&CryptoUtils::sha256(&last)).to_vec());
     })
 }
 
 pub fn op_ripemd160(context: Context) -> Context {
     stack_op(context, |st| {
         let last = st.pop().unwrap();
-        st.push(CryptoUtils::ripemd160(last));
+        st.push(CryptoUtils::ripemd160(&last).to_vec());
     })
 }
 
@@ -377,7 +377,8 @@ pub fn op_checkmultisigverify(context: Context) -> Context {
 pub fn op_hash160(context: Context) -> Context {
     stack_op(context, |st| {
         let last = st.pop().unwrap();
-        st.push(CryptoUtils::ripemd160(CryptoUtils::sha256(last)));
+        st.push(CryptoUtils::ripemd160(&CryptoUtils::sha256(&last))
+                .to_vec());
     })
 }
 
