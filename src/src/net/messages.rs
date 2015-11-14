@@ -654,22 +654,40 @@ impl Serialize for VersionMessage {
         self.       nonce.serialize(serializer, Flag::NoFlag);
         self.  user_agent.serialize(serializer, Flag::VariableSize);
         self.start_height.serialize(serializer, Flag::NoFlag);
-        self.       relay.serialize(serializer, Flag::NoFlag);
+
+        if self.version > 70001 {
+            self.relay.serialize(serializer, Flag::NoFlag);
+        }
     }
 }
 
 impl Deserialize for VersionMessage {
     fn deserialize(deserializer: &mut Deserializer, _: Flag) -> Result<Self, String> {
+        let version =           try!(i32::deserialize(deserializer, Flag::NoFlag));
+        let services =     try!(Services::deserialize(deserializer, Flag::NoFlag));
+        let timestamp =    try!(time::Tm::deserialize(deserializer, Flag::NoFlag));
+        let addr_recv =   try!(IPAddress::deserialize(deserializer, Flag::NoFlag));
+        let addr_from =   try!(IPAddress::deserialize(deserializer, Flag::NoFlag));
+        let nonce =             try!(u64::deserialize(deserializer, Flag::NoFlag));
+        let user_agent =     try!(String::deserialize(deserializer, Flag::VariableSize));
+        let start_height =      try!(i32::deserialize(deserializer, Flag::NoFlag));
+
+        let relay = if version > 70001 {
+            try!(bool::deserialize(deserializer, Flag::NoFlag))
+        } else {
+            false
+        };
+
         Ok(VersionMessage {
-            version:            try!(i32::deserialize(deserializer, Flag::NoFlag)),
-            services:      try!(Services::deserialize(deserializer, Flag::NoFlag)),
-            timestamp:     try!(time::Tm::deserialize(deserializer, Flag::NoFlag)),
-            addr_recv:    try!(IPAddress::deserialize(deserializer, Flag::NoFlag)),
-            addr_from:    try!(IPAddress::deserialize(deserializer, Flag::NoFlag)),
-            nonce:              try!(u64::deserialize(deserializer, Flag::NoFlag)),
-            user_agent:      try!(String::deserialize(deserializer, Flag::VariableSize)),
-            start_height:       try!(i32::deserialize(deserializer, Flag::NoFlag)),
-            relay:             try!(bool::deserialize(deserializer, Flag::NoFlag)),
+            version: version,
+            services: services,
+            timestamp: timestamp,
+            addr_recv: addr_recv,
+            addr_from: addr_from,
+            nonce: nonce,
+            user_agent: user_agent,
+            start_height: start_height,
+            relay: relay,
         })
     }
 }
@@ -762,7 +780,7 @@ pub fn get_serialized_message(network_type: NetworkType,
         network_type: network_type,
         command: command,
         length: serializer.inner().len() as u32,
-        checksum: checksum[28..32].to_vec(),
+        checksum: checksum[0..4].to_vec(),
     };
 
     let mut header_serializer = Serializer::new();
@@ -781,7 +799,7 @@ mod tests {
     use utils::Debug;
 
     #[test]
-    fn test() {
+    fn test_version_message() {
         let buffer =
             vec![// version
                  0x62, 0xEA, 0x00, 0x00,
@@ -803,9 +821,7 @@ mod tests {
                  0x0F, 0x2F, 0x53, 0x61, 0x74, 0x6F, 0x73, 0x68, 0x69, 0x3A,
                  0x30, 0x2E, 0x37, 0x2E, 0x32, 0x2F,
                  // last block id
-                 0xC0, 0x3E, 0x03, 0x00,
-                 // relay
-                 0x01];
+                 0xC0, 0x3E, 0x03, 0x00];
 
         let mut deserializer = Deserializer::new(&buffer[..]);
         let message = VersionMessage::deserialize(&mut deserializer, Flag::NoFlag).unwrap();
@@ -814,7 +830,7 @@ mod tests {
         assert_eq!(message.services, Services::new(true));
         assert_eq!(message.user_agent, "/Satoshi:0.7.2/");
         assert_eq!(message.start_height, 212672);
-        assert_eq!(message.relay, true);
+        assert_eq!(message.relay, false);
 
         let mut serializer = Serializer::new();
         message.serialize(&mut serializer, Flag::NoFlag);
@@ -823,5 +839,54 @@ mod tests {
         Debug::print_bytes(&result);
 
         assert_eq!(result, buffer);
+    }
+
+    #[test]
+    fn test_complete_message() {
+        let buffer = vec![
+             // magic number
+             0xF9, 0xBE, 0xB4, 0xD9,
+             // command
+             0x76, 0x65, 0x72, 0x73, 0x69, 0x6F, 0x6E, 0x00, 0x00, 0x00,
+             0x00, 0x00,
+             // message length
+             0x64, 0x00, 0x00, 0x00,
+             // checksum
+             0x3B, 0x64, 0x8D, 0x5A,
+
+             // version
+             0x62, 0xEA, 0x00, 0x00,
+             // services
+             0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+             // timestamp
+             0x11, 0xB2, 0xD0, 0x50, 0x00, 0x00, 0x00, 0x00,
+             // addr recv
+             0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF,
+             0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+             // addr from
+             0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF,
+             0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+             // nonce
+             0x3B, 0x2E, 0xB3, 0x5D, 0x8C, 0xE6, 0x17, 0x65,
+             // user-agent
+             0x0F, 0x2F, 0x53, 0x61, 0x74, 0x6F, 0x73, 0x68, 0x69, 0x3A,
+             0x30, 0x2E, 0x37, 0x2E, 0x32, 0x2F,
+             // last block height
+             0xC0, 0x3E, 0x03, 0x00];
+
+        let mut deserializer = Deserializer::new(&buffer[..]);
+        let header  = MessageHeader::deserialize(&mut deserializer, Flag::NoFlag).unwrap();
+        assert_eq!(header.network_type, NetworkType::Main);
+        assert_eq!(header.command, Command::Version);
+        assert_eq!(header.length, 100);
+
+        let message = VersionMessage::deserialize(&mut deserializer, Flag::NoFlag).unwrap();
+
+        let serialized = get_serialized_message(NetworkType::Main, Command::Version, Some(Box::new(message)));
+        Debug::print_bytes(&serialized);
+
+        assert_eq!(buffer, serialized);
     }
 }
