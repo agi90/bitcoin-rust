@@ -163,15 +163,15 @@ impl BitcoinClient {
         match header.command() {
             &Command::Pong => {
                 // Ping and Pong message use the same format
-                let message = try!(PingMessage::deserialize(message_bytes, Flag::NoFlag));
+                let message = try!(PingMessage::deserialize(message_bytes, &[]));
                 self.handle_pong(message);
             },
             &Command::Ping => {
-                let message = try!(PingMessage::deserialize(message_bytes, Flag::NoFlag));
+                let message = try!(PingMessage::deserialize(message_bytes, &[]));
                 self.handle_ping(message);
             },
             &Command::Version => {
-                let message = try!(VersionMessage::deserialize(message_bytes, Flag::NoFlag));
+                let message = try!(VersionMessage::deserialize(message_bytes, &[]));
                 self.handle_version(token, message);
             },
             &Command::Verack => {
@@ -187,11 +187,11 @@ impl BitcoinClient {
                 return Err(format!("Unknown message. {:?}", message_bytes));
             },
             &Command::Addr => {
-                let message = try!(AddrMessage::deserialize(message_bytes, Flag::NoFlag));
+                let message = try!(AddrMessage::deserialize(message_bytes, &[]));
                 self.handle_addr(message);
             },
             &Command::Reject => {
-                let message = try!(RejectMessage::deserialize(message_bytes, Flag::NoFlag));
+                let message = try!(RejectMessage::deserialize(message_bytes, &[]));
                 self.handle_reject(message);
             }
         };
@@ -203,7 +203,7 @@ impl BitcoinClient {
 impl rpcengine::MessageHandler for BitcoinClient {
     fn handle(&mut self, token: mio::Token, message: Vec<u8>) -> VecDeque<Vec<u8>> {
         let mut deserializer = Deserializer::new(&message[..]);
-        let handled = MessageHeader::deserialize(&mut deserializer, Flag::NoFlag)
+        let handled = MessageHeader::deserialize(&mut deserializer, &[])
             .map(|m| self.handle_command(m, token, &mut deserializer));
 
         if handled.is_err() {
@@ -228,7 +228,7 @@ pub fn start(address: SocketAddr) {
     let state = Arc::new(Mutex::new(State::new(NetworkType::TestNet3)));
     let client = BitcoinClient::new(state.clone());
 
-    println!("running bitcoin server; port=18333");
+    println!("running bitcoin server; port=18334");
     let child = thread::spawn(move || {
         let mut engine = RPCEngine::new(server, Box::new(client));
         event_loop.run(&mut engine).unwrap();

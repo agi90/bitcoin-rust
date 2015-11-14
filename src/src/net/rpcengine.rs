@@ -10,7 +10,7 @@ use std::mem;
 use std::io::Cursor;
 use std::collections::{VecDeque, HashMap};
 
-use super::messages::{MessageHeader, Deserialize, Deserializer, Flag};
+use super::messages::{MessageHeader, Deserialize, Deserializer};
 
 pub const SERVER: mio::Token = mio::Token(0);
 
@@ -273,7 +273,7 @@ impl State {
 
     fn get_message_length(&self) -> Option<usize> {
         let mut cursor = Deserializer::new(&self.reading_buf[..]);
-        MessageHeader::deserialize(&mut cursor, Flag::NoFlag)
+        MessageHeader::deserialize(&mut cursor, &[])
             .map(|h| Some(h.len() as usize)).unwrap_or(None)
     }
 

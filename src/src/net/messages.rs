@@ -30,7 +30,7 @@ pub enum Command {
     Unknown,
 }
 
-#[derive(PartialEq, Copy, Clone)]
+#[derive(Debug, PartialEq, Copy, Clone)]
 pub enum Flag {
     // applicable to i16 for now
     BigEndian,
@@ -39,11 +39,10 @@ pub enum Flag {
     FixedSize(usize),
     // applicable to time::Tm
     ShortFormat,
-    NoFlag,
 }
 
 pub trait Serialize {
-    fn serialize(&self, serializer: &mut Serializer, flag: Flag);
+    fn serialize(&self, serializer: &mut Serializer, flag: &[Flag]);
 }
 
 pub struct Serializer {
@@ -80,8 +79,8 @@ impl Serializer {
         self.push_bytes(&data, bytes);
     }
 
-    pub fn serialize_u(&mut self, x: u64, bytes: usize, flag: Flag) {
-        if flag == Flag::VariableSize {
+    pub fn serialize_u(&mut self, x: u64, bytes: usize, flags: &[Flag]) {
+        if flags.contains(&Flag::VariableSize) {
             self.var_int(x);
         } else {
             self.u_to_fixed(x, bytes);
@@ -135,32 +134,32 @@ impl Serializer {
 }
 
 impl Serialize for bool {
-    fn serialize(&self, serializer: &mut Serializer, _: Flag) {
+    fn serialize(&self, serializer: &mut Serializer, _: &[Flag]) {
         serializer.push(if *self { 1 } else { 0 });
     }
 }
 
 impl Serialize for i16 {
-    fn serialize(&self, serializer: &mut Serializer, _: Flag) {
+    fn serialize(&self, serializer: &mut Serializer, _: &[Flag]) {
         serializer.i_to_fixed(*self as i64, 2);
     }
 }
 
 impl Serialize for i32 {
-    fn serialize(&self, serializer: &mut Serializer, _: Flag) {
+    fn serialize(&self, serializer: &mut Serializer, _: &[Flag]) {
         serializer.i_to_fixed(*self as i64, 4);
     }
 }
 
 impl Serialize for u8 {
-    fn serialize(&self, serializer: &mut Serializer, _: Flag) {
+    fn serialize(&self, serializer: &mut Serializer, _: &[Flag]) {
         serializer.push(*self);
     }
 }
 
 impl Serialize for u16 {
-    fn serialize(&self, serializer: &mut Serializer, flag: Flag) {
-        if flag == Flag::BigEndian {
+    fn serialize(&self, serializer: &mut Serializer, flags: &[Flag]) {
+        if flags.contains(&Flag::BigEndian) {
             let data = serializer.to_bytes(*self as u64);
             serializer.push(data[1]);
             serializer.push(data[0]);
@@ -171,19 +170,19 @@ impl Serialize for u16 {
 }
 
 impl Serialize for u32 {
-    fn serialize(&self, serializer: &mut Serializer, flag: Flag) {
+    fn serialize(&self, serializer: &mut Serializer, flag: &[Flag]) {
         serializer.serialize_u(*self as u64, 4, flag);
     }
 }
 
 impl Serialize for u64 {
-    fn serialize(&self, serializer: &mut Serializer, flag: Flag) {
+    fn serialize(&self, serializer: &mut Serializer, flag: &[Flag]) {
         serializer.serialize_u(*self, 8, flag);
     }
 }
 
 impl Serialize for Ipv6Addr {
-    fn serialize(&self, serializer: &mut Serializer, _: Flag) {
+    fn serialize(&self, serializer: &mut Serializer, _: &[Flag]) {
         for x in self.segments().iter() {
             let bytes = serializer.to_bytes(*x as u64);
             // Ip are encoded with big-endian integers
@@ -194,9 +193,9 @@ impl Serialize for Ipv6Addr {
 }
 
 impl Serialize for time::Tm {
-    fn serialize(&self, serializer: &mut Serializer, flag: Flag) {
-        if flag == Flag::ShortFormat {
-            serializer.serialize_u(self.to_timespec().sec as u64, 4, Flag::NoFlag);
+    fn serialize(&self, serializer: &mut Serializer, flags: &[Flag]) {
+        if flags.contains(&Flag::ShortFormat) {
+            serializer.serialize_u(self.to_timespec().sec as u64, 4, &[]);
         } else {
             serializer.i_to_fixed(self.to_timespec().sec, 8);
         }
@@ -204,10 +203,10 @@ impl Serialize for time::Tm {
 }
 
 impl Serialize for String {
-    fn serialize(&self, serializer: &mut Serializer, flag: Flag) {
+    fn serialize(&self, serializer: &mut Serializer, flags: &[Flag]) {
         let length = self.as_bytes().len();
 
-        if flag == Flag::VariableSize {
+        if flags.contains(&Flag::VariableSize) {
             serializer.var_int(length as u64);
         }
 
@@ -216,53 +215,53 @@ impl Serialize for String {
 }
 
 impl<T: Serialize> Serialize for Vec<T> {
-    fn serialize(&self, serializer: &mut Serializer, flag: Flag) {
+    fn serialize(&self, serializer: &mut Serializer, flags: &[Flag]) {
         let length = self.len();
 
-        if flag == Flag::VariableSize {
+        if flags.contains(&Flag::VariableSize) {
             serializer.var_int(length as u64);
         }
 
         for x in self {
-            x.serialize(serializer, Flag::NoFlag);
+            x.serialize(serializer, &[]);
         }
     }
 }
 
 impl Serialize for Services {
-    fn serialize(&self, serializer: &mut Serializer, _: Flag) {
+    fn serialize(&self, serializer: &mut Serializer, _: &[Flag]) {
         let data = if self.node_network { 1 } else { 0 };
-        serializer.serialize_u(data, 8, Flag::NoFlag);
+        serializer.serialize_u(data, 8, &[]);
     }
 }
 
 impl Deserialize for IPAddress {
-    fn deserialize(deserializer: &mut Deserializer, _:Flag) -> Result<Self, String> {
+    fn deserialize(deserializer: &mut Deserializer, _: &[Flag]) -> Result<Self, String> {
         Ok(IPAddress::new(
-            try!(Services::deserialize(deserializer, Flag::NoFlag)),
-            try!(Ipv6Addr::deserialize(deserializer, Flag::NoFlag)),
-                 try!(u16::deserialize(deserializer, Flag::BigEndian)),
+            try!(Services::deserialize(deserializer, &[])),
+            try!(Ipv6Addr::deserialize(deserializer, &[])),
+                 try!(u16::deserialize(deserializer, &[Flag::BigEndian])),
         ))
     }
 }
 
 impl Serialize for IPAddress {
-    fn serialize(&self, serializer: &mut Serializer, _: Flag) {
-        self.services.serialize(serializer, Flag::NoFlag);
-        self. address.serialize(serializer, Flag::NoFlag);
-        self.    port.serialize(serializer, Flag::BigEndian);
+    fn serialize(&self, serializer: &mut Serializer, _: &[Flag]) {
+        self.services.serialize(serializer, &[]);
+        self. address.serialize(serializer, &[]);
+        self.    port.serialize(serializer, &[Flag::BigEndian]);
     }
 }
 
 impl <T: Serialize, V: Serialize> Serialize for (T,V) {
-    fn serialize(&self, serializer: &mut Serializer, flag: Flag) {
+    fn serialize(&self, serializer: &mut Serializer, flag: &[Flag]) {
         self.0.serialize(serializer, flag);
         self.1.serialize(serializer, flag);
     }
 }
 
 impl <T: Serialize> Serialize for [T] {
-    fn serialize(&self, serializer: &mut Serializer, flag: Flag) {
+    fn serialize(&self, serializer: &mut Serializer, flag: &[Flag]) {
         for x in self {
             x.serialize(serializer, flag);
         }
@@ -270,7 +269,7 @@ impl <T: Serialize> Serialize for [T] {
 }
 
 pub trait Deserialize: Sized {
-    fn deserialize(deserializer: &mut Deserializer, flag: Flag) -> Result<Self, String>;
+    fn deserialize(deserializer: &mut Deserializer, flag: &[Flag]) -> Result<Self, String>;
 }
 
 #[derive(Debug)]
@@ -279,54 +278,54 @@ pub struct Deserializer<'a> {
 }
 
 impl Deserialize for i32 {
-    fn deserialize(deserializer: &mut Deserializer, _: Flag) -> Result<Self, String> {
+    fn deserialize(deserializer: &mut Deserializer, _: &[Flag]) -> Result<Self, String> {
         deserializer.to_i(4).map(|r| r as i32)
     }
 }
 
 impl Deserialize for i64 {
-    fn deserialize(deserializer: &mut Deserializer, _: Flag) -> Result<Self, String> {
+    fn deserialize(deserializer: &mut Deserializer, _: &[Flag]) -> Result<Self, String> {
         deserializer.to_i(8)
     }
 }
 
 impl Deserialize for u8 {
-    fn deserialize(deserializer: &mut Deserializer, _: Flag) -> Result<Self, String> {
-        deserializer.to_u(1, Flag::NoFlag).map(|r| r as u8)
+    fn deserialize(deserializer: &mut Deserializer, _: &[Flag]) -> Result<Self, String> {
+        deserializer.to_u(1, &[]).map(|r| r as u8)
     }
 }
 
 impl Deserialize for u16 {
-    fn deserialize(deserializer: &mut Deserializer, flag: Flag) -> Result<Self, String> {
-        if flag == Flag::BigEndian {
+    fn deserialize(deserializer: &mut Deserializer, flags: &[Flag]) -> Result<Self, String> {
+        if flags.contains(&Flag::BigEndian) {
             deserializer.get_be_u16()
         } else {
-            deserializer.to_u(2, flag).map(|r| r as u16)
+            deserializer.to_u(2, flags).map(|r| r as u16)
         }
     }
 }
 
 impl Deserialize for u32 {
-    fn deserialize(deserializer: &mut Deserializer, flag: Flag) -> Result<Self, String> {
+    fn deserialize(deserializer: &mut Deserializer, flag: &[Flag]) -> Result<Self, String> {
         deserializer.to_u(4, flag).map(|r| r as u32)
     }
 }
 
 impl Deserialize for u64 {
-    fn deserialize(deserializer: &mut Deserializer, flag: Flag) -> Result<Self, String> {
+    fn deserialize(deserializer: &mut Deserializer, flag: &[Flag]) -> Result<Self, String> {
         deserializer.to_u(8, flag).map(|r| r as u64)
     }
 }
 
 impl Deserialize for Ipv6Addr {
-    fn deserialize(deserializer: &mut Deserializer, _: Flag) -> Result<Self, String> {
+    fn deserialize(deserializer: &mut Deserializer, _: &[Flag]) -> Result<Self, String> {
         deserializer.to_ip()
     }
 }
 
 impl Deserialize for time::Tm {
-    fn deserialize(deserializer: &mut Deserializer, flag: Flag) -> Result<Self, String> {
-        if flag == Flag::ShortFormat {
+    fn deserialize(deserializer: &mut Deserializer, flags: &[Flag]) -> Result<Self, String> {
+        if flags.contains(&Flag::ShortFormat) {
             deserializer.to_short_time()
         } else {
             deserializer.to_time()
@@ -335,27 +334,39 @@ impl Deserialize for time::Tm {
 }
 
 impl Deserialize for bool {
-    fn deserialize(deserializer: &mut Deserializer, _: Flag) -> Result<Self, String> {
+    fn deserialize(deserializer: &mut Deserializer, _: &[Flag]) -> Result<Self, String> {
         deserializer.to_bool()
     }
 }
 
 impl Deserialize for String {
-    fn deserialize(deserializer: &mut Deserializer, flag: Flag) -> Result<Self, String> {
+    fn deserialize(deserializer: &mut Deserializer, flag: &[Flag]) -> Result<Self, String> {
         deserializer.to_string(flag)
     }
 }
 
+fn extract_fixed_size(flags: &[Flag]) -> Option<usize> {
+    for flag in flags {
+        if let &Flag::FixedSize(n) = flag {
+            return Some(n);
+        };
+    };
+
+    None
+}
+
 impl<T: Deserialize> Deserialize for Vec<T> {
-    fn deserialize(deserializer: &mut Deserializer, flag: Flag) -> Result<Self, String> {
-        let length = match flag {
-            Flag::FixedSize(n) => n,
-            _                  => try!(deserializer.to_var_int_any()).1 as usize,
+    fn deserialize(deserializer: &mut Deserializer, flags: &[Flag]) -> Result<Self, String> {
+        let length_ = extract_fixed_size(flags);
+
+        let length = match length_ {
+            Some(x) => x,
+            None    => try!(deserializer.to_var_int_any()).1 as usize,
         };
 
         let mut result = vec![];
         for _ in 0..length {
-            result.push(try!(T::deserialize(deserializer, Flag::NoFlag)));
+            result.push(try!(T::deserialize(deserializer, &[])));
         }
 
         Ok(result)
@@ -363,7 +374,7 @@ impl<T: Deserialize> Deserialize for Vec<T> {
 }
 
 impl<T:Deserialize, U: Deserialize> Deserialize for (T, U) {
-    fn deserialize(deserializer: &mut Deserializer, flag: Flag) -> Result<Self, String> {
+    fn deserialize(deserializer: &mut Deserializer, flag: &[Flag]) -> Result<Self, String> {
         let first  = try!(T::deserialize(deserializer, flag));
         let second = try!(U::deserialize(deserializer, flag));
 
@@ -373,8 +384,8 @@ impl<T:Deserialize, U: Deserialize> Deserialize for (T, U) {
 
 
 impl Deserialize for Services {
-    fn deserialize(deserializer: &mut Deserializer, _:Flag) -> Result<Self, String> {
-        let data = try!(u64::deserialize(deserializer, Flag::NoFlag));
+    fn deserialize(deserializer: &mut Deserializer, _: &[Flag]) -> Result<Self, String> {
+        let data = try!(u64::deserialize(deserializer, &[]));
         Ok(Services::new(data == 1))
     }
 }
@@ -433,8 +444,8 @@ impl<'a> Deserializer<'a> {
         Ok(self.to_u_slice(&data[0..size]))
     }
 
-    pub fn to_u(&mut self, size: usize, flag: Flag) -> Result<u64, String> {
-        if flag == Flag::VariableSize {
+    pub fn to_u(&mut self, size: usize, flags: &[Flag]) -> Result<u64, String> {
+        if flags.contains(&Flag::VariableSize) {
             self.to_var_int(size)
         } else {
             self.to_u_fixed(size)
@@ -513,10 +524,12 @@ impl<'a> Deserializer<'a> {
         Ok(data != 0)
     }
 
-    fn to_string(&mut self, flag: Flag) -> Result<String, String> {
-        let length = match flag {
-            Flag::FixedSize(n) => n,
-            _                  => try!(self.to_var_int_any()).1 as usize,
+    fn to_string(&mut self, flags: &[Flag]) -> Result<String, String> {
+        let length_ = extract_fixed_size(flags);
+
+        let length = match length_ {
+            Some(x) => x,
+            None    => try!(self.to_var_int_any()).1 as usize,
         };
 
         if length > 1024 {
@@ -534,8 +547,8 @@ impl<'a> Deserializer<'a> {
 }
 
 impl Deserialize for Command {
-    fn deserialize(deserializer: &mut Deserializer, _: Flag) -> Result<Self, String> {
-        let data = try!(String::deserialize(deserializer, Flag::FixedSize(12)));
+    fn deserialize(deserializer: &mut Deserializer, _: &[Flag]) -> Result<Self, String> {
+        let data = try!(String::deserialize(deserializer, &[Flag::FixedSize(12)]));
         match data.as_str() {
             "version\0\0\0\0\0"    => Ok(Command::Version),
             "verack\0\0\0\0\0\0"   => Ok(Command::Verack),
@@ -551,7 +564,7 @@ impl Deserialize for Command {
 }
 
 impl Serialize for Command {
-    fn serialize(&self, serializer: &mut Serializer, _: Flag) {
+    fn serialize(&self, serializer: &mut Serializer, _: &[Flag]) {
         let bytes = match self {
             &Command::Addr        => b"addr\0\0\0\0\0\0\0\0",
             &Command::GetAddr     => b"getaddr\0\0\0\0\0",
@@ -569,8 +582,8 @@ impl Serialize for Command {
 }
 
 impl Deserialize for NetworkType {
-    fn deserialize(deserializer: &mut Deserializer, _: Flag) -> Result<Self, String> {
-        let data = try!(u32::deserialize(deserializer, Flag::NoFlag));
+    fn deserialize(deserializer: &mut Deserializer, _: &[Flag]) -> Result<Self, String> {
+        let data = try!(u32::deserialize(deserializer, &[]));
         match data {
             0xD9B4BEF9 => Ok(NetworkType::Main),
             0xDAB5BFFA => Ok(NetworkType::TestNet),
@@ -582,7 +595,7 @@ impl Deserialize for NetworkType {
 }
 
 impl Serialize for NetworkType {
-    fn serialize(&self, serializer: &mut Serializer, _: Flag) {
+    fn serialize(&self, serializer: &mut Serializer, _: &[Flag]) {
         let magic = match self {
             &NetworkType::Main      => 0xD9B4BEF9,
             &NetworkType::TestNet   => 0xDAB5BFFA,
@@ -593,7 +606,7 @@ impl Serialize for NetworkType {
             &NetworkType::Unknown   => unimplemented!(),
         };
 
-        serializer.serialize_u(magic, 4, Flag::NoFlag);
+        serializer.serialize_u(magic, 4, &[]);
     }
 }
 
@@ -612,21 +625,21 @@ impl MessageHeader {
 }
 
 impl Serialize for MessageHeader {
-    fn serialize(&self, serializer: &mut Serializer, _: Flag) {
-        self.network_type.serialize(serializer, Flag::NoFlag);
-        self.     command.serialize(serializer, Flag::NoFlag);
-        self.      length.serialize(serializer, Flag::NoFlag);
-        self.    checksum.serialize(serializer, Flag::NoFlag);
+    fn serialize(&self, serializer: &mut Serializer, _: &[Flag]) {
+        self.network_type.serialize(serializer, &[]);
+        self.     command.serialize(serializer, &[]);
+        self.      length.serialize(serializer, &[]);
+        self.    checksum.serialize(serializer, &[]);
     }
 }
 
 impl Deserialize for MessageHeader {
-    fn deserialize(deserializer: &mut Deserializer, _: Flag) -> Result<Self, String> {
+    fn deserialize(deserializer: &mut Deserializer, _: &[Flag]) -> Result<Self, String> {
         Ok(MessageHeader {
-            network_type: try!(NetworkType::deserialize(deserializer, Flag::NoFlag)),
-            command:          try!(Command::deserialize(deserializer, Flag::NoFlag)),
-            length:               try!(u32::deserialize(deserializer, Flag::NoFlag)),
-            checksum: try!(<Vec<u8> as Deserialize>::deserialize(deserializer, Flag::FixedSize(4))),
+            network_type: try!(NetworkType::deserialize(deserializer, &[])),
+            command:          try!(Command::deserialize(deserializer, &[])),
+            length:               try!(u32::deserialize(deserializer, &[])),
+            checksum: try!(<Vec<u8> as Deserialize>::deserialize(deserializer, &[Flag::FixedSize(4)])),
         })
     }
 }
@@ -645,35 +658,35 @@ pub struct VersionMessage {
 }
 
 impl Serialize for VersionMessage {
-    fn serialize(&self, serializer: &mut Serializer, _: Flag) {
-        self.     version.serialize(serializer, Flag::NoFlag);
-        self.    services.serialize(serializer, Flag::NoFlag);
-        self.   timestamp.serialize(serializer, Flag::NoFlag);
-        self.   addr_recv.serialize(serializer, Flag::NoFlag);
-        self.   addr_from.serialize(serializer, Flag::NoFlag);
-        self.       nonce.serialize(serializer, Flag::NoFlag);
-        self.  user_agent.serialize(serializer, Flag::VariableSize);
-        self.start_height.serialize(serializer, Flag::NoFlag);
+    fn serialize(&self, serializer: &mut Serializer, _: &[Flag]) {
+        self.     version.serialize(serializer, &[]);
+        self.    services.serialize(serializer, &[]);
+        self.   timestamp.serialize(serializer, &[]);
+        self.   addr_recv.serialize(serializer, &[]);
+        self.   addr_from.serialize(serializer, &[]);
+        self.       nonce.serialize(serializer, &[]);
+        self.  user_agent.serialize(serializer, &[Flag::VariableSize]);
+        self.start_height.serialize(serializer, &[]);
 
         if self.version > 70001 {
-            self.relay.serialize(serializer, Flag::NoFlag);
+            self.relay.serialize(serializer, &[]);
         }
     }
 }
 
 impl Deserialize for VersionMessage {
-    fn deserialize(deserializer: &mut Deserializer, _: Flag) -> Result<Self, String> {
-        let version =           try!(i32::deserialize(deserializer, Flag::NoFlag));
-        let services =     try!(Services::deserialize(deserializer, Flag::NoFlag));
-        let timestamp =    try!(time::Tm::deserialize(deserializer, Flag::NoFlag));
-        let addr_recv =   try!(IPAddress::deserialize(deserializer, Flag::NoFlag));
-        let addr_from =   try!(IPAddress::deserialize(deserializer, Flag::NoFlag));
-        let nonce =             try!(u64::deserialize(deserializer, Flag::NoFlag));
-        let user_agent =     try!(String::deserialize(deserializer, Flag::VariableSize));
-        let start_height =      try!(i32::deserialize(deserializer, Flag::NoFlag));
+    fn deserialize(deserializer: &mut Deserializer, _: &[Flag]) -> Result<Self, String> {
+        let version =           try!(i32::deserialize(deserializer, &[]));
+        let services =     try!(Services::deserialize(deserializer, &[]));
+        let timestamp =    try!(time::Tm::deserialize(deserializer, &[]));
+        let addr_recv =   try!(IPAddress::deserialize(deserializer, &[]));
+        let addr_from =   try!(IPAddress::deserialize(deserializer, &[]));
+        let nonce =             try!(u64::deserialize(deserializer, &[]));
+        let user_agent =     try!(String::deserialize(deserializer, &[Flag::VariableSize]));
+        let start_height =      try!(i32::deserialize(deserializer, &[]));
 
         let relay = if version > 70001 {
-            try!(bool::deserialize(deserializer, Flag::NoFlag))
+            try!(bool::deserialize(deserializer, &[]))
         } else {
             false
         };
@@ -698,15 +711,15 @@ pub struct PingMessage {
 }
 
 impl Serialize for PingMessage {
-    fn serialize(&self, serializer: &mut Serializer, _: Flag) {
-        self.nonce.serialize(serializer, Flag::NoFlag);
+    fn serialize(&self, serializer: &mut Serializer, _: &[Flag]) {
+        self.nonce.serialize(serializer, &[]);
     }
 }
 
 impl Deserialize for PingMessage {
-    fn deserialize(deserializer: &mut Deserializer, _: Flag) -> Result<Self, String> {
+    fn deserialize(deserializer: &mut Deserializer, _: &[Flag]) -> Result<Self, String> {
         Ok(PingMessage {
-            nonce: try!(u64::deserialize(deserializer, Flag::NoFlag)),
+            nonce: try!(u64::deserialize(deserializer, &[])),
         })
     }
 }
@@ -715,6 +728,7 @@ impl PingMessage {
     pub fn nonce(&self) -> u64 { self.nonce }
 }
 
+#[derive(Debug)]
 pub struct AddrMessage {
     pub addr_list: Vec<(time::Tm, IPAddress)>,
 }
@@ -722,16 +736,16 @@ pub struct AddrMessage {
 type AddrList = Vec<(time::Tm, IPAddress)>;
 
 impl Deserialize for AddrMessage {
-    fn deserialize(deserializer: &mut Deserializer, _: Flag) -> Result<Self, String> {
+    fn deserialize(deserializer: &mut Deserializer, _: &[Flag]) -> Result<Self, String> {
         Ok(AddrMessage {
-            addr_list: try!(AddrList::deserialize(deserializer, Flag::ShortFormat)),
+            addr_list: try!(AddrList::deserialize(deserializer, &[Flag::VariableSize, Flag::ShortFormat])),
         })
     }
 }
 
 impl Serialize for AddrMessage {
-    fn serialize(&self, serializer: &mut Serializer, _: Flag) {
-        self.addr_list.serialize(serializer, Flag::ShortFormat);
+    fn serialize(&self, serializer: &mut Serializer, _: &[Flag]) {
+        self.addr_list.serialize(serializer, &[Flag::VariableSize, Flag::ShortFormat]);
     }
 }
 
@@ -751,19 +765,19 @@ pub struct RejectMessage {
 }
 
 impl Serialize for RejectMessage {
-    fn serialize(&self, serializer: &mut Serializer, _: Flag) {
-        self.message.serialize(serializer, Flag::VariableSize);
-        self  .ccode.serialize(serializer, Flag::NoFlag);
-        self .reason.serialize(serializer, Flag::VariableSize);
+    fn serialize(&self, serializer: &mut Serializer, _: &[Flag]) {
+        self.message.serialize(serializer, &[Flag::VariableSize]);
+        self  .ccode.serialize(serializer, &[]);
+        self .reason.serialize(serializer, &[Flag::VariableSize]);
     }
 }
 
 impl Deserialize for RejectMessage {
-    fn deserialize(deserializer: &mut Deserializer, _: Flag) -> Result<Self, String> {
+    fn deserialize(deserializer: &mut Deserializer, _: &[Flag]) -> Result<Self, String> {
         Ok(RejectMessage {
-            message: try!(String::deserialize(deserializer, Flag::VariableSize)),
-            ccode:       try!(u8::deserialize(deserializer, Flag::NoFlag)),
-            reason:  try!(String::deserialize(deserializer, Flag::VariableSize)),
+            message: try!(String::deserialize(deserializer, &[Flag::VariableSize])),
+            ccode:       try!(u8::deserialize(deserializer, &[])),
+            reason:  try!(String::deserialize(deserializer, &[Flag::VariableSize])),
         })
     }
 }
@@ -772,7 +786,7 @@ pub fn get_serialized_message(network_type: NetworkType,
                               command: Command,
                               message: Option<Box<Serialize>>) -> Vec<u8> {
     let mut serializer = Serializer::new();
-    message.map(|m| m.serialize(&mut serializer, Flag::NoFlag));
+    message.map(|m| m.serialize(&mut serializer, &[]));
 
     let checksum = CryptoUtils::sha256(&CryptoUtils::sha256(serializer.inner()));
 
@@ -784,7 +798,7 @@ pub fn get_serialized_message(network_type: NetworkType,
     };
 
     let mut header_serializer = Serializer::new();
-    header.serialize(&mut header_serializer, Flag::NoFlag);
+    header.serialize(&mut header_serializer, &[]);
 
     let mut result = header_serializer.into_inner();
     result.extend(serializer.into_inner());
@@ -824,7 +838,7 @@ mod tests {
                  0xC0, 0x3E, 0x03, 0x00];
 
         let mut deserializer = Deserializer::new(&buffer[..]);
-        let message = VersionMessage::deserialize(&mut deserializer, Flag::NoFlag).unwrap();
+        let message = VersionMessage::deserialize(&mut deserializer, &[]).unwrap();
 
         assert_eq!(message.version, 60002);
         assert_eq!(message.services, Services::new(true));
@@ -833,7 +847,7 @@ mod tests {
         assert_eq!(message.relay, false);
 
         let mut serializer = Serializer::new();
-        message.serialize(&mut serializer, Flag::NoFlag);
+        message.serialize(&mut serializer, &[]);
 
         let result = serializer.into_inner();
         Debug::print_bytes(&result);
@@ -877,12 +891,12 @@ mod tests {
              0xC0, 0x3E, 0x03, 0x00];
 
         let mut deserializer = Deserializer::new(&buffer[..]);
-        let header  = MessageHeader::deserialize(&mut deserializer, Flag::NoFlag).unwrap();
+        let header  = MessageHeader::deserialize(&mut deserializer, &[]).unwrap();
         assert_eq!(header.network_type, NetworkType::Main);
         assert_eq!(header.command, Command::Version);
         assert_eq!(header.length, 100);
 
-        let message = VersionMessage::deserialize(&mut deserializer, Flag::NoFlag).unwrap();
+        let message = VersionMessage::deserialize(&mut deserializer, &[]).unwrap();
 
         let serialized = get_serialized_message(NetworkType::Main, Command::Version, Some(Box::new(message)));
         Debug::print_bytes(&serialized);
