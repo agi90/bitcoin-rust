@@ -83,6 +83,11 @@ impl mio::Handler for RPCEngine {
                 }
             }
             _ => {
+                if !self.connections.contains(token) {
+                    // If we're here it means the connection has been closed already
+                    return;
+                }
+
                 let rpc = self.connections[token].ready(event_loop, events);
                 if self.connections[token].is_closed() {
                     let _ = self.connections.remove(token);
