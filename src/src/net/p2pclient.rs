@@ -155,9 +155,10 @@ impl BitcoinClient {
 
     fn handle_command(&mut self, header: MessageHeader, token: mio::Token,
                       message_bytes: &mut Deserializer) -> Result<(), String> {
+
         if *header.magic() != self.lock_state().network_type {
             // This packet is not for the right version :O
-            return Err(format!("Error: Received packet for wrong version. {:?}", header.magic()));
+            return Err(format!("Received packet for wrong version: {:?}", header.magic()));
         }
 
         match header.command() {
@@ -204,10 +205,10 @@ impl rpcengine::MessageHandler for BitcoinClient {
     fn handle(&mut self, token: mio::Token, message: Vec<u8>) -> VecDeque<Vec<u8>> {
         let mut deserializer = Deserializer::new(&message[..]);
         let handled = MessageHeader::deserialize(&mut deserializer, &[])
-            .map(|m| self.handle_command(m, token, &mut deserializer));
+            .and_then(|m| self.handle_command(m, token, &mut deserializer));
 
-        if handled.is_err() {
-           println!("Error: {:?}", handled);
+        if let Err(x) = handled {
+           println!("Error: {:?}", x);
         };
 
         let mut state = self.state.lock().unwrap();
