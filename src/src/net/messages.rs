@@ -27,6 +27,7 @@ pub enum Command {
     Verack,
     Inv,
     Tx,
+    NotFound,
     GetData,
     Ping,
     Pong,
@@ -567,6 +568,7 @@ impl<'a> Deserializer<'a> {
         // so we need to do some validation.
         // TODO: switch to a better library
         if sec < 0 || sec > 2000000000 {
+            panic!();
             Err(format!("Invalid time sec={}", sec))
         } else {
             Ok(time::at_utc(time::Timespec::new(sec, 0)))
@@ -611,6 +613,7 @@ impl Deserialize for Command {
             "ping\0\0\0\0\0\0\0\0"   => Ok(Command::Ping),
             "pong\0\0\0\0\0\0\0\0"   => Ok(Command::Pong),
             "getaddr\0\0\0\0\0"      => Ok(Command::GetAddr),
+            "notfound\0\0\0\0"       => Ok(Command::NotFound),
             "addr\0\0\0\0\0\0\0\0"   => Ok(Command::Addr),
             "reject\0\0\0\0\0\0"     => Ok(Command::Reject),
             "getheaders\0\0"         => Ok(Command::GetHeaders),
@@ -636,6 +639,7 @@ impl Serialize for Command {
             &Command::Ping        => b"ping\0\0\0\0\0\0\0\0",
             &Command::Pong        => b"pong\0\0\0\0\0\0\0\0",
             &Command::Reject      => b"reject\0\0\0\0\0\0",
+            &Command::NotFound    => b"notfound\0\0\0\0",
             &Command::GetData     => b"getdata\0\0\0\0\0",
             &Command::GetHeaders  => b"getheaders\0\0",
             &Command::Headers     => b"headers\0\0\0\0\0",

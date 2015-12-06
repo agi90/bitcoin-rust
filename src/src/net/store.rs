@@ -17,7 +17,6 @@ impl TxStore {
 
     pub fn insert(&mut self, hash: [u8; 32], message: TxMessage) {
         self.store.insert(hash, message);
-        println!("Store size: {:?}", self.store.len());
     }
 
     pub fn new() -> TxStore {

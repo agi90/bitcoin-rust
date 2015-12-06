@@ -20,8 +20,6 @@ use std::mem;
 
 use mio::Token;
 
-use utils::Debug;
-
 use super::store::TxStore;
 
 struct BitcoinClient {
@@ -180,7 +178,7 @@ impl BitcoinClient {
         state.queue_message(Command::Verack, None);
     }
 
-    fn handle_addr(&mut self, message: AddrMessage) {
+    fn handle_addr(&mut self, _: AddrMessage) {
         let mut state = self.state.lock().unwrap();
         let mut genesis = vec![
             0x00,  0x00,  0x00,  0x00,  0x09,  0x33,  0xea,  0x01,  0xad,  0x0e,
@@ -215,6 +213,7 @@ impl BitcoinClient {
 
     fn handle_headers(&self, message: HeadersMessage) {
         // TODO: actually do something
+        println!("Headers: {:?}", message);
     }
 
     fn handle_getheaders(&self, message: GetHeadersMessage) {
@@ -235,6 +234,10 @@ impl BitcoinClient {
     fn handle_getdata(&self, message: InvMessage, _: mio::Token) {
         // TODO
         println!("Got getdata {:?}", message);
+    }
+
+    fn handle_notfound(&self, message: InvMessage, _: mio::Token) {
+        println!("Got notfound {:?}", message);
     }
 
     fn handle_inv(&self, message: InvMessage, _: mio::Token) {
@@ -292,6 +295,10 @@ impl BitcoinClient {
             &Command::GetData => {
                 let message = try!(InvMessage::deserialize(message_bytes, &[]));
                 self.handle_getdata(message, token);
+            },
+            &Command::NotFound => {
+                let message = try!(InvMessage::deserialize(message_bytes, &[]));
+                self.handle_notfound(message, token);
             },
             &Command::Inv => {
                 let message = try!(InvMessage::deserialize(message_bytes, &[]));

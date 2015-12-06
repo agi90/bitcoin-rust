@@ -61,7 +61,7 @@ impl mio::Handler for RPCEngine {
                 assert!(events.is_readable());
 
                 match self.server.accept() {
-                    Ok(Some((socket, addr))) => {
+                    Ok(Some((socket, _))) => {
                         // TODO: handle errors
                         let token = self.connections
                             .insert_with(|token| Connection::new(socket, token))
