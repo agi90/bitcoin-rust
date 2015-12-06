@@ -216,6 +216,11 @@ impl BitcoinClient {
         self.state.lock().unwrap().queue_message(Command::Headers, Some(Box::new(response)));
     }
 
+    fn handle_tx(&self, message: TxMessage, _: mio::Token) {
+        // TODO
+        println!("Got tx {:?}", message);
+    }
+
     fn handle_inv(&self, message: InvMessage, _: mio::Token) {
         // TODO
         println!("Got inv {:?}", message);
@@ -247,6 +252,10 @@ impl BitcoinClient {
         }
 
         match header.command() {
+            &Command::Tx => {
+                let message = try!(TxMessage::deserialize(message_bytes, &[]));
+                self.handle_tx(message, token);
+            },
             &Command::Inv => {
                 let message = try!(InvMessage::deserialize(message_bytes, &[]));
                 self.handle_inv(message, token);
