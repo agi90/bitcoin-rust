@@ -583,7 +583,10 @@ impl Deserialize for Command {
             "reject\0\0\0\0\0\0"   => Ok(Command::Reject),
             "getheaders\0\0"       => Ok(Command::GetHeaders),
             "headers\0\0\0\0\0"    => Ok(Command::Headers),
-            _                      => Ok(Command::Unknown),
+            command                => {
+                println!("Warning: unknown command `{}`", command);
+                Ok(Command::Unknown)
+            },
         }
     }
 }
