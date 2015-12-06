@@ -1,3 +1,5 @@
+extern crate rand;
+
 use super::IPAddress;
 use super::Services;
 use utils::CryptoUtils;
@@ -27,6 +29,7 @@ pub enum Command {
     Pong,
     Reject,
     GetHeaders,
+    Headers,
     Unknown,
 }
 
@@ -42,6 +45,7 @@ pub enum Flag {
 }
 
 type Bytes = Vec<u8>;
+type BlockLocators = Vec<Bytes>;
 type BlockHeaders = Vec<BlockHeader>;
 type AddrList = Vec<(time::Tm, IPAddress)>;
 
@@ -401,6 +405,10 @@ impl<'a> Deserializer<'a> {
         self.buffer.into_inner()
     }
 
+    pub fn get_ref(&self) -> &'a [u8] {
+        self.buffer.get_ref()
+    }
+
     pub fn new(buffer: &[u8]) -> Deserializer {
         Deserializer {
             buffer: Cursor::new(buffer),
@@ -574,6 +582,7 @@ impl Deserialize for Command {
             "addr\0\0\0\0\0\0\0\0" => Ok(Command::Addr),
             "reject\0\0\0\0\0\0"   => Ok(Command::Reject),
             "getheaders\0\0"       => Ok(Command::GetHeaders),
+            "headers\0\0\0\0\0"    => Ok(Command::Headers),
             _                      => Err(format!("Unknown command: {}", data)),
         }
     }
@@ -590,6 +599,7 @@ impl Serialize for Command {
             &Command::Pong        => b"pong\0\0\0\0\0\0\0\0",
             &Command::Reject      => b"reject\0\0\0\0\0\0",
             &Command::GetHeaders  => b"getheaders\0\0",
+            &Command::Headers     => b"headers\0\0\0\0\0",
             &Command::Unknown     => unimplemented!(),
         };
 
@@ -723,7 +733,7 @@ impl Deserialize for VersionMessage {
 
 #[derive(Debug)]
 pub struct PingMessage {
-    nonce: u64,
+    pub nonce: u64,
 }
 
 impl Serialize for PingMessage {
@@ -742,6 +752,11 @@ impl Deserialize for PingMessage {
 
 impl PingMessage {
     pub fn nonce(&self) -> u64 { self.nonce }
+    pub fn new() -> PingMessage {
+        PingMessage {
+            nonce: rand::random(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -796,15 +811,22 @@ impl Deserialize for RejectMessage {
     }
 }
 
+fn get_hash<T: Serialize> (data: &T) -> [u8; 32] {
+    let mut serializer = Serializer::new();
+    data.serialize(&mut serializer, &[]);
+
+    CryptoUtils::sha256(&CryptoUtils::sha256(serializer.inner()))
+}
+
 #[derive(Debug)]
 pub struct BlockHeader {
-    version: i32,
-    prev_block: Bytes,
-    merkle_root: Bytes,
-    timestamp: time::Tm,
-    bits: u32,
-    nonce: u32,
-    txn_count: u64,
+    pub version: i32,
+    pub prev_block: Vec<u8>,
+    pub merkle_root: Vec<u8>,
+    pub timestamp: time::Tm,
+    pub bits: u32,
+    pub nonce: u32,
+    pub txn_count: u64,
 }
 
 impl Serialize for BlockHeader {
@@ -833,29 +855,63 @@ impl Deserialize for BlockHeader {
     }
 }
 
-struct BlockHeadersMessage {
+impl BlockHeader {
+    fn hash(&self) -> [u8; 32] {
+        get_hash::<Self>(&self)
+    }
+}
+
+#[derive(Debug)]
+pub struct HeadersMessage {
     headers: BlockHeaders,
 }
 
-impl Serialize for BlockHeadersMessage {
+impl HeadersMessage {
+    pub fn new(headers: Vec<BlockHeader>) -> HeadersMessage {
+        HeadersMessage {
+            headers: headers,
+        }
+    }
+}
+
+impl Serialize for HeadersMessage {
     fn serialize(&self, serializer: &mut Serializer, _: &[Flag]) {
         self.headers.serialize(serializer, &[Flag::VariableSize]);
     }
 }
 
-impl Deserialize for BlockHeadersMessage {
+impl Deserialize for HeadersMessage {
     fn deserialize(deserializer: &mut Deserializer, _: &[Flag]) -> Result<Self, String> {
-        Ok(BlockHeadersMessage {
+        Ok(HeadersMessage {
             headers: try!(BlockHeaders::deserialize(deserializer, &[Flag::VariableSize])),
         })
     }
 }
 
-struct GetHeadersMessage {
-    version: u32,
-    hash_count: u64,
-    block_locators: Vec<Vec<u8>>,
-    hash_stop: Vec<u8>,
+#[derive(Debug)]
+pub struct GetHeadersMessage {
+    pub version: u32,
+    pub block_locators: Vec<Vec<u8>>,
+    pub hash_stop: Vec<u8>,
+}
+
+impl Serialize for GetHeadersMessage {
+    fn serialize(&self, serializer: &mut Serializer, _: &[Flag]) {
+        self.       version.serialize(serializer, &[]);
+        self.block_locators.serialize(serializer, &[Flag::VariableSize, Flag::FixedSize(32)]);
+        self.     hash_stop.serialize(serializer, &[Flag::FixedSize(32)]);
+    }
+}
+
+impl Deserialize for GetHeadersMessage {
+    fn deserialize(deserializer: &mut Deserializer, _: &[Flag]) -> Result<Self, String> {
+        Ok(GetHeadersMessage {
+            version: try!(u32::deserialize(deserializer, &[])),
+            block_locators: try!(BlockLocators::deserialize(deserializer, &[Flag::VariableSize,
+                                                            Flag::FixedSize(32)])),
+            hash_stop: try!(Bytes::deserialize(deserializer, &[Flag::FixedSize(32)])),
+        })
+    }
 }
 
 pub fn get_serialized_message(network_type: NetworkType,

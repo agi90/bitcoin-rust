@@ -20,6 +20,8 @@ use std::mem;
 
 use mio::Token;
 
+use utils::Debug;
+
 struct BitcoinClient {
     version: i32,
     services: Services,
@@ -42,12 +44,12 @@ impl State {
         }
     }
 
-    pub fn add_peer(&mut self, token: mio::Token, version: VersionMessage) {
-        self.peers.insert(token, Peer::new(time::now(), version));
+    pub fn add_peer(&mut self, token: mio::Token, version: VersionMessage,
+                    connection_type: ConnectionType) {
+        self.peers.insert(token, Peer::new(version, connection_type));
     }
 
     pub fn queue_message(&mut self, command: Command, message: Option<Box<Serialize>>) {
-        println!("Sending {:?}", command);
         let to_send = get_serialized_message(self.network_type,
                                              command,
                                              message);
@@ -56,35 +58,85 @@ impl State {
     }
 
     pub fn get_peers(&self) -> &HashMap<mio::Token, Peer> { &self.peers }
+
+    pub fn get_peer(&mut self, token: &mio::Token) -> Option<&mut Peer> {
+        self.peers.get_mut(token)
+    }
+}
+
+#[derive(Debug)]
+enum ConnectionType {
+    Inbound,
+    Outbound,
 }
 
 #[derive(Debug)]
 struct Peer {
-    last_ping: time::Tm,
+    ping_time: time::Tm,
+    ping: i64,
+    ping_data: u64,
     version: VersionMessage,
+    verak_received: bool,
+    connection_type: ConnectionType,
 }
 
 impl Peer {
-    pub fn new(last_ping: time::Tm, version: VersionMessage) -> Peer {
+    pub fn new(version: VersionMessage, connection_type: ConnectionType) -> Peer {
         Peer {
-            last_ping: last_ping,
+            ping_time: time::now(),
+            ping: -1,
+            ping_data: 0,
             version: version,
+            verak_received: false,
+            connection_type: connection_type,
+        }
+    }
+
+    pub fn ping_time(&self) -> time::Tm { self.ping_time }
+
+    pub fn received_verack(&mut self) {
+        self.verak_received = true;
+    }
+
+    pub fn sent_ping(&mut self, ping_data: u64) {
+        self.ping_time = time::now();
+        self.ping_data = ping_data;
+    }
+
+    pub fn got_pong(&mut self, pong_data: u64) {
+        if self.ping_data == pong_data {
+            self.ping = (time::now() - self.ping_time).num_milliseconds();
+        } else {
+            println!("Invalid ping!");
         }
     }
 }
 
+const VERSION: i32 = 70001;
+type StateMutex<'a> = MutexGuard<'a, State>;
+
 impl BitcoinClient {
     fn new(state: Arc<Mutex<State>>) -> BitcoinClient {
         BitcoinClient {
-            version: 70001,
+            version: VERSION,
             services: Services::new(true),
             user_agent: "/Agi:0.0.1/".to_string(),
             state: state,
         }
     }
 
-    fn handle_verack(&self) {
-        // TODO: register verack
+    fn handle_verack(&mut self, token: mio::Token) {
+        let mut state = self.state.lock().unwrap();
+        state.get_peer(&token).unwrap().received_verack();
+        state.queue_message(Command::GetAddr, None);
+
+        Self::ping(&mut state, token);
+    }
+
+    fn ping(state: &mut StateMutex, token: mio::Token) {
+        let message = PingMessage::new();
+        state.get_peer(&token).unwrap().sent_ping(message.nonce);
+        state.queue_message(Command::Ping, Some(Box::new(message)));
     }
 
     fn generate_version_message(&self, recipient_ip: IPAddress) -> VersionMessage {
@@ -110,14 +162,30 @@ impl BitcoinClient {
         let mut state = self.state.lock().unwrap();
 
         let version = self.generate_version_message(message.addr_recv);
-        state.add_peer(token, message);
+        state.add_peer(token, message, ConnectionType::Inbound);
 
         state.queue_message(Command::Version, Some(Box::new(version)));
         state.queue_message(Command::Verack, None);
     }
 
-    fn handle_addr(&mut self, _: AddrMessage) {
-        // TODO
+    fn handle_addr(&mut self, message: AddrMessage) {
+        let mut state = self.state.lock().unwrap();
+        let mut genesis = vec![
+            0x00,  0x00,  0x00,  0x00,  0x09,  0x33,  0xea,  0x01,  0xad,  0x0e,
+            0xe9,  0x84,  0x20,  0x97,  0x79,  0xba,  0xae,  0xc3,  0xce,  0xd9,
+            0x0f,  0xa3,  0xf4,  0x08,  0x71,  0x95,  0x26,  0xf8,  0xd7,  0x7f,
+            0x49,  0x43];
+
+        genesis.reverse();
+
+        let response = GetHeadersMessage {
+            version: VERSION as u32,
+            // genesis block
+            block_locators: vec![genesis],
+            hash_stop: vec![0; 32],
+        };
+
+        state.queue_message(Command::GetHeaders, Some(Box::new(response)));
     }
 
     fn handle_getaddr(&self) {
@@ -125,7 +193,7 @@ impl BitcoinClient {
 
         let mut peers = vec![];
         for peer in state.get_peers().values() {
-            peers.push((peer.last_ping, peer.version.addr_from));
+            peers.push((peer.ping_time(), peer.version.addr_from));
         }
 
         let response = AddrMessage::new(peers);
@@ -133,12 +201,23 @@ impl BitcoinClient {
         state.queue_message(Command::Addr, Some(Box::new(response)));
     }
 
-    fn handle_getheaders(&self) {
-        // TODO
+    fn handle_headers(&self, message: HeadersMessage) {
+        // TODO: actually do something
     }
 
-    fn handle_pong(&self, _: PingMessage) {
-        unimplemented!()
+    fn handle_getheaders(&self, message: GetHeadersMessage) {
+        // TODO: actually do something
+        for h in message.block_locators {
+            let mut clone = h.clone();
+            clone.reverse();
+        }
+
+        let response = HeadersMessage::new(vec![]);
+        self.state.lock().unwrap().queue_message(Command::Headers, Some(Box::new(response)));
+    }
+
+    fn handle_pong(&self, message: PingMessage, token: mio::Token) {
+        self.lock_state().get_peer(&token).map(|p| p.got_pong(message.nonce));
     }
 
     fn handle_reject(&self, message: RejectMessage) {
@@ -152,12 +231,11 @@ impl BitcoinClient {
             .queue_message(Command::Pong, Some(Box::new(message)));
     }
 
-    fn lock_state<'a>(&'a self) -> MutexGuard<'a, State> { self.state.lock().unwrap() }
+    fn lock_state<'a>(&'a self) -> StateMutex { self.state.lock().unwrap() }
 
     fn handle_command(&mut self, header: MessageHeader, token: mio::Token,
                       message_bytes: &mut Deserializer) -> Result<(), String> {
 
-        println!("{:?}", header);
         if *header.magic() != self.lock_state().network_type {
             // This packet is not for the right version :O
             return Err(format!("Received packet for wrong version: {:?}", header.magic()));
@@ -167,7 +245,7 @@ impl BitcoinClient {
             &Command::Pong => {
                 // Ping and Pong message use the same format
                 let message = try!(PingMessage::deserialize(message_bytes, &[]));
-                self.handle_pong(message);
+                self.handle_pong(message, token);
             },
             &Command::Ping => {
                 let message = try!(PingMessage::deserialize(message_bytes, &[]));
@@ -178,13 +256,18 @@ impl BitcoinClient {
                 self.handle_version(token, message);
             },
             &Command::Verack => {
-                self.handle_verack();
+                self.handle_verack(token);
             },
             &Command::GetAddr => {
                 self.handle_getaddr();
             },
             &Command::GetHeaders => {
-                self.handle_getheaders();
+                let message = try!(GetHeadersMessage::deserialize(message_bytes, &[]));
+                self.handle_getheaders(message);
+            },
+            &Command::Headers => {
+                let message = try!(HeadersMessage::deserialize(message_bytes, &[]));
+                self.handle_headers(message);
             },
             &Command::Unknown => {
                 return Err(format!("Unknown message. {:?}", message_bytes));
@@ -227,7 +310,9 @@ impl rpcengine::MessageHandler for BitcoinClient {
 pub fn start(address: SocketAddr) {
     let server = tcp::TcpListener::bind(&address).unwrap();
     let mut event_loop = mio::EventLoop::new().unwrap();
-    event_loop.register(&server, rpcengine::SERVER).unwrap();
+    event_loop.register(&server, rpcengine::SERVER, mio::EventSet::readable(),
+                        mio::PollOpt::edge()).unwrap();
+
     let state = Arc::new(Mutex::new(State::new(NetworkType::TestNet3)));
     let client = BitcoinClient::new(state.clone());
 

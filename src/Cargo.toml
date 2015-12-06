@@ -7,9 +7,9 @@ authors = ["Giovanni Sferro <agi.novanta@gmail.com>"]
 regex = "0.1.41"
 rustc-serialize = "0.3"
 hyper = "0.6.15"
-rust-crypto = "*"
+rust-crypto = "0.2.34"
 time = "0.1"
-mio = "0.4"
+mio = "0.5"
 bytes = "0.2.11"
 rand = "0.3"
 

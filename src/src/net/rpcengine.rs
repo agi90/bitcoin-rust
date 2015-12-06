@@ -59,17 +59,17 @@ impl mio::Handler for RPCEngine {
                 assert!(events.is_readable());
 
                 match self.server.accept() {
-                    Ok(Some(socket)) => {
+                    Ok(Some((socket, addr))) => {
                         // TODO: handle errors
                         let token = self.connections
                             .insert_with(|token| Connection::new(socket, token))
                             .unwrap();
 
-                        event_loop.register_opt(
+                        event_loop.register(
                             &self.connections[token].socket,
                             token,
                             mio::EventSet::readable(),
-                            mio::PollOpt::edge() | mio::PollOpt::oneshot()).unwrap();
+                            mio::PollOpt::oneshot()).unwrap();
                     }
                     Ok(None) => {
                         println!("the server socket wasn't actually ready");
