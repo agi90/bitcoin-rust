@@ -71,7 +71,7 @@ impl mio::Handler for RPCEngine {
                             &self.connections[token].socket,
                             token,
                             mio::EventSet::readable(),
-                            mio::PollOpt::oneshot()).unwrap();
+                            mio::PollOpt::oneshot() | mio::PollOpt::edge()).unwrap();
                     }
                     Ok(None) => {
                         println!("the server socket wasn't actually ready");
@@ -90,11 +90,13 @@ impl mio::Handler for RPCEngine {
                     return;
                 }
 
-                let rpc = self.connections[token].ready(event_loop, events);
+                let rpc_vec = self.connections[token].ready(event_loop, events);
                 if self.connections[token].is_closed() {
                     let _ = self.connections.remove(token);
-                } else if rpc.len() > 0 {
-                    self.handle_rpc(event_loop, token, rpc);
+                } else if rpc_vec.len() > 0 {
+                    for rpc in rpc_vec {
+                        self.handle_rpc(event_loop, token, rpc);
+                    }
                 }
             }
         }
@@ -123,7 +125,7 @@ impl Connection {
     }
 
     fn ready(&mut self, event_loop: &mut mio::EventLoop<RPCEngine>,
-             events: mio::EventSet) -> Vec<u8> {
+             events: mio::EventSet) -> Vec<Vec<u8>> {
         let mut response = vec![];
 
         if events.is_readable() {
@@ -139,7 +141,7 @@ impl Connection {
         response
     }
 
-    fn read(&mut self) -> Vec<u8> {
+    fn read(&mut self) -> Vec<Vec<u8>> {
         match self.socket.try_read_buf(self.state.mut_read_buf()) {
             Ok(Some(0)) => {
                 // The client has closed the read socket, for now
@@ -148,16 +150,28 @@ impl Connection {
                 vec![]
             }
             Ok(Some(_)) => {
-                match self.state.try_get_rpc() {
-                    Ok(x) => {
-                        x
-                    },
-                    Err(x) => {
-                        println!("Error: {}", x);
-                        self.state.close();
-                        vec![]
+                let mut done = false;
+                let mut result = vec![];
+                while !done {
+                    let rpc = match self.state.try_get_rpc() {
+                        Ok(x) => {
+                            x
+                        },
+                        Err(x) => {
+                            println!("Error: {}", x);
+                            self.state.close();
+                            vec![]
+                        }
+                    };
+
+                    if rpc.len() > 0 {
+                        result.push(rpc);
+                    } else {
+                        done = true;
                     }
                 }
+
+                result
             }
             Ok(None) => {
                 vec![]
@@ -200,7 +214,7 @@ impl Connection {
         };
 
         event_loop.reregister(&self.socket, self.token, event_set,
-                              mio::PollOpt::oneshot())
+                              mio::PollOpt::oneshot() | mio::PollOpt::edge())
                   .unwrap();
     }
 
