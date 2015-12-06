@@ -27,6 +27,7 @@ pub enum Command {
     Verack,
     Inv,
     Tx,
+    GetData,
     Ping,
     Pong,
     Reject,
@@ -613,6 +614,7 @@ impl Deserialize for Command {
             "addr\0\0\0\0\0\0\0\0"   => Ok(Command::Addr),
             "reject\0\0\0\0\0\0"     => Ok(Command::Reject),
             "getheaders\0\0"         => Ok(Command::GetHeaders),
+            "getdata\0\0\0\0\0"      => Ok(Command::GetData),
             "headers\0\0\0\0\0"      => Ok(Command::Headers),
             command                  => {
                 println!("Warning: unknown command `{}`", command);
@@ -634,6 +636,7 @@ impl Serialize for Command {
             &Command::Ping        => b"ping\0\0\0\0\0\0\0\0",
             &Command::Pong        => b"pong\0\0\0\0\0\0\0\0",
             &Command::Reject      => b"reject\0\0\0\0\0\0",
+            &Command::GetData     => b"getdata\0\0\0\0\0",
             &Command::GetHeaders  => b"getheaders\0\0",
             &Command::Headers     => b"headers\0\0\0\0\0",
             &Command::Unknown     => unimplemented!(),
@@ -847,11 +850,17 @@ impl Deserialize for RejectMessage {
     }
 }
 
-fn get_hash<T: Serialize> (data: &T) -> [u8; 32] {
-    let mut serializer = Serializer::new();
-    data.serialize(&mut serializer, &[]);
+pub trait Hashable {
+    fn hash(&self) -> [u8; 32];
+}
 
-    CryptoUtils::sha256(&CryptoUtils::sha256(serializer.inner()))
+impl<T: Serialize> Hashable for T {
+    fn hash(&self) -> [u8; 32] {
+        let mut serializer = Serializer::new();
+        self.serialize(&mut serializer, &[]);
+
+        CryptoUtils::sha256(&CryptoUtils::sha256(serializer.inner()))
+    }
 }
 
 #[derive(Debug)]
@@ -888,12 +897,6 @@ impl Deserialize for BlockHeader {
             nonce:          try!(u32::deserialize(deserializer, &[])),
             txn_count:      try!(u64::deserialize(deserializer, &[Flag::VariableSize])),
         })
-    }
-}
-
-impl BlockHeader {
-    fn hash(&self) -> [u8; 32] {
-        get_hash::<Self>(&self)
     }
 }
 
@@ -988,23 +991,32 @@ impl Deserialize for InventoryVectorType {
 
 #[derive(Debug)]
 pub struct InventoryVector {
-    type_: InventoryVectorType,
-    hash: Vec<u8>,
+    pub type_: InventoryVectorType,
+    pub hash: [u8; 32],
 }
 
 impl Serialize for InventoryVector {
     fn serialize(&self, serializer: &mut Serializer, _: &[Flag]) {
         self.type_.serialize(serializer, &[]);
-        self.hash .serialize(serializer, &[Flag::FixedSize(32)]);
+        self.hash .serialize(serializer, &[]);
     }
 }
 
 impl Deserialize for InventoryVector {
     fn deserialize(deserializer: &mut Deserializer, _: &[Flag]) -> Result<Self, String> {
         Ok(InventoryVector {
-            type_: try!(InventoryVectorType::deserialize(deserializer, &[])),
-            hash: try!(Bytes::deserialize(deserializer, &[Flag::FixedSize(32)])),
+            type_: try!(Deserialize::deserialize(deserializer, &[])),
+            hash:  try!(Deserialize::deserialize(deserializer, &[])),
         })
+    }
+}
+
+impl InventoryVector {
+    pub fn new(type_: InventoryVectorType, hash: [u8; 32]) -> InventoryVector {
+        InventoryVector {
+            type_: type_,
+            hash: hash,
+        }
     }
 }
 
@@ -1012,20 +1024,28 @@ type Inventory = Vec<InventoryVector>;
 
 #[derive(Debug)]
 pub struct InvMessage {
-    inventory: Vec<InventoryVector>,
+    pub inventory: Vec<InventoryVector>,
 }
 
 impl Serialize for InvMessage {
     fn serialize(&self, serializer: &mut Serializer, _: &[Flag]) {
-        self.inventory.serialize(serializer, &[]);
+        self.inventory.serialize(serializer, &[Flag::VariableSize]);
     }
 }
 
 impl Deserialize for InvMessage {
     fn deserialize(deserializer: &mut Deserializer, _: &[Flag]) -> Result<Self, String> {
         Ok(InvMessage {
-            inventory: try!(Inventory::deserialize(deserializer, &[])),
+            inventory: try!(Inventory::deserialize(deserializer, &[Flag::VariableSize])),
         })
+    }
+}
+
+impl InvMessage {
+    pub fn new(inventory: Vec<InventoryVector>) -> InvMessage {
+        InvMessage {
+            inventory: inventory,
+        }
     }
 }
 
@@ -1061,7 +1081,7 @@ pub struct TxIn {
 impl Serialize for TxIn {
     fn serialize(&self, serializer: &mut Serializer, _: &[Flag]) {
         self.previous_output.serialize(serializer, &[]);
-        self.script         .serialize(serializer, &[]);
+        self.script         .serialize(serializer, &[Flag::VariableSize]);
         self.sequence       .serialize(serializer, &[]);
     }
 }
@@ -1070,7 +1090,7 @@ impl Deserialize for TxIn {
     fn deserialize(deserializer: &mut Deserializer, _: &[Flag]) -> Result<Self, String> {
         Ok(TxIn {
             previous_output: try!(Deserialize::deserialize(deserializer, &[])),
-            script:          try!(Deserialize::deserialize(deserializer, &[])),
+            script:          try!(Deserialize::deserialize(deserializer, &[Flag::VariableSize])),
             sequence:        try!(Deserialize::deserialize(deserializer, &[])),
         })
     }
@@ -1085,7 +1105,7 @@ pub struct TxOut {
 impl Serialize for TxOut {
     fn serialize(&self, serializer: &mut Serializer, _: &[Flag]) {
         self.value    .serialize(serializer, &[]);
-        self.pk_script.serialize(serializer, &[]);
+        self.pk_script.serialize(serializer, &[Flag::VariableSize]);
     }
 }
 
@@ -1093,7 +1113,7 @@ impl Deserialize for TxOut {
     fn deserialize(deserializer: &mut Deserializer, _: &[Flag]) -> Result<Self, String> {
         Ok(TxOut {
             value:     try!(Deserialize::deserialize(deserializer, &[])),
-            pk_script: try!(Deserialize::deserialize(deserializer, &[])),
+            pk_script: try!(Deserialize::deserialize(deserializer, &[Flag::VariableSize])),
         })
     }
 }
@@ -1109,8 +1129,8 @@ pub struct TxMessage {
 impl Serialize for TxMessage {
     fn serialize(&self, serializer: &mut Serializer, _: &[Flag]) {
         self.version  .serialize(serializer, &[]);
-        self.tx_in    .serialize(serializer, &[]);
-        self.tx_out   .serialize(serializer, &[]);
+        self.tx_in    .serialize(serializer, &[Flag::VariableSize]);
+        self.tx_out   .serialize(serializer, &[Flag::VariableSize]);
         self.lock_time.serialize(serializer, &[]);
     }
 }
@@ -1119,8 +1139,8 @@ impl Deserialize for TxMessage {
     fn deserialize(deserializer: &mut Deserializer, _: &[Flag]) -> Result<Self, String> {
         Ok(TxMessage {
             version:   try!(Deserialize::deserialize(deserializer, &[])),
-            tx_in:     try!(Deserialize::deserialize(deserializer, &[])),
-            tx_out:    try!(Deserialize::deserialize(deserializer, &[])),
+            tx_in:     try!(Deserialize::deserialize(deserializer, &[Flag::VariableSize])),
+            tx_out:    try!(Deserialize::deserialize(deserializer, &[Flag::VariableSize])),
             lock_time: try!(Deserialize::deserialize(deserializer, &[])),
         })
     }

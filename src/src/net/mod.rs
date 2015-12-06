@@ -1,4 +1,5 @@
 mod rpcengine;
+mod store;
 pub mod messages;
 pub mod p2pclient;
 

@@ -22,6 +22,8 @@ use mio::Token;
 
 use utils::Debug;
 
+use super::store::TxStore;
+
 struct BitcoinClient {
     version: i32,
     services: Services,
@@ -33,6 +35,7 @@ struct State {
     peers: HashMap<mio::Token, Peer>,
     message_queue: VecDeque<Vec<u8>>,
     network_type: NetworkType,
+    tx_store: TxStore,
 }
 
 impl State {
@@ -41,6 +44,7 @@ impl State {
             peers: HashMap::new(),
             message_queue: VecDeque::new(),
             network_type: network_type,
+            tx_store: TxStore::new(),
         }
     }
 
@@ -61,6 +65,14 @@ impl State {
 
     pub fn get_peer(&mut self, token: &mio::Token) -> Option<&mut Peer> {
         self.peers.get_mut(token)
+    }
+
+    pub fn has_tx(&self, hash: &[u8; 32]) -> bool {
+        self.tx_store.has(hash)
+    }
+
+    pub fn add_tx(&mut self, tx: TxMessage) {
+        self.tx_store.insert(tx.hash(), tx);
     }
 }
 
@@ -217,13 +229,34 @@ impl BitcoinClient {
     }
 
     fn handle_tx(&self, message: TxMessage, _: mio::Token) {
+        self.lock_state().add_tx(message);
+    }
+
+    fn handle_getdata(&self, message: InvMessage, _: mio::Token) {
         // TODO
-        println!("Got tx {:?}", message);
+        println!("Got getdata {:?}", message);
     }
 
     fn handle_inv(&self, message: InvMessage, _: mio::Token) {
-        // TODO
-        println!("Got inv {:?}", message);
+        let mut state = self.state.lock().unwrap();
+
+        let mut new_data = vec![];
+
+        for inventory in message.inventory {
+            match inventory.type_ {
+                InventoryVectorType::MSG_TX => {
+                    if !state.has_tx(&inventory.hash) {
+                        new_data.push(InventoryVector::new(
+                                InventoryVectorType::MSG_TX,
+                                inventory.hash));
+                    }
+                },
+                type_ => println!("Unhandled inv {:?}", type_),
+            }
+        }
+
+        state.queue_message(Command::GetData,
+                            Some(Box::new(InvMessage::new(new_data))));
     }
 
     fn handle_pong(&self, message: PingMessage, token: mio::Token) {
@@ -255,6 +288,10 @@ impl BitcoinClient {
             &Command::Tx => {
                 let message = try!(TxMessage::deserialize(message_bytes, &[]));
                 self.handle_tx(message, token);
+            },
+            &Command::GetData => {
+                let message = try!(InvMessage::deserialize(message_bytes, &[]));
+                self.handle_getdata(message, token);
             },
             &Command::Inv => {
                 let message = try!(InvMessage::deserialize(message_bytes, &[]));
