@@ -25,6 +25,7 @@ pub enum Command {
     GetAddr,
     Version,
     Verack,
+    Inv,
     Ping,
     Pong,
     Reject,
@@ -574,16 +575,17 @@ impl Deserialize for Command {
     fn deserialize(deserializer: &mut Deserializer, _: &[Flag]) -> Result<Self, String> {
         let data = try!(String::deserialize(deserializer, &[Flag::FixedSize(12)]));
         match data.as_str() {
-            "version\0\0\0\0\0"    => Ok(Command::Version),
-            "verack\0\0\0\0\0\0"   => Ok(Command::Verack),
-            "ping\0\0\0\0\0\0\0\0" => Ok(Command::Ping),
-            "pong\0\0\0\0\0\0\0\0" => Ok(Command::Pong),
-            "getaddr\0\0\0\0\0"    => Ok(Command::GetAddr),
-            "addr\0\0\0\0\0\0\0\0" => Ok(Command::Addr),
-            "reject\0\0\0\0\0\0"   => Ok(Command::Reject),
-            "getheaders\0\0"       => Ok(Command::GetHeaders),
-            "headers\0\0\0\0\0"    => Ok(Command::Headers),
-            command                => {
+            "version\0\0\0\0\0"     => Ok(Command::Version),
+            "verack\0\0\0\0\0\0"    => Ok(Command::Verack),
+            "inv\0\0\0\0\0\0\0\0\0" => Ok(Command::Inv),
+            "ping\0\0\0\0\0\0\0\0"  => Ok(Command::Ping),
+            "pong\0\0\0\0\0\0\0\0"  => Ok(Command::Pong),
+            "getaddr\0\0\0\0\0"     => Ok(Command::GetAddr),
+            "addr\0\0\0\0\0\0\0\0"  => Ok(Command::Addr),
+            "reject\0\0\0\0\0\0"    => Ok(Command::Reject),
+            "getheaders\0\0"        => Ok(Command::GetHeaders),
+            "headers\0\0\0\0\0"     => Ok(Command::Headers),
+            command                 => {
                 println!("Warning: unknown command `{}`", command);
                 Ok(Command::Unknown)
             },
@@ -598,6 +600,7 @@ impl Serialize for Command {
             &Command::GetAddr     => b"getaddr\0\0\0\0\0",
             &Command::Version     => b"version\0\0\0\0\0",
             &Command::Verack      => b"verack\0\0\0\0\0\0",
+            &Command::Inv         => b"inv\0\0\0\0\0\0\0\0\0",
             &Command::Ping        => b"ping\0\0\0\0\0\0\0\0",
             &Command::Pong        => b"pong\0\0\0\0\0\0\0\0",
             &Command::Reject      => b"reject\0\0\0\0\0\0",
@@ -913,6 +916,85 @@ impl Deserialize for GetHeadersMessage {
             block_locators: try!(BlockLocators::deserialize(deserializer, &[Flag::VariableSize,
                                                             Flag::FixedSize(32)])),
             hash_stop: try!(Bytes::deserialize(deserializer, &[Flag::FixedSize(32)])),
+        })
+    }
+}
+
+#[allow(non_camel_case_types)]
+#[derive(Debug)]
+pub enum InventoryVectorType {
+    ERROR,
+    MSG_TX,
+    MSG_BLOCK,
+    MSG_FILTERED_BLOCK,
+}
+
+impl Serialize for InventoryVectorType {
+    fn serialize(&self, serializer: &mut Serializer, _: &[Flag]) {
+        let index: u32 = match self {
+            &InventoryVectorType::ERROR              => 0,
+            &InventoryVectorType::MSG_TX             => 1,
+            &InventoryVectorType::MSG_BLOCK          => 2,
+            &InventoryVectorType::MSG_FILTERED_BLOCK => 3,
+        };
+
+        index.serialize(serializer, &[]);
+    }
+}
+
+impl Deserialize for InventoryVectorType {
+    fn deserialize(deserializer: &mut Deserializer, _: &[Flag]) -> Result<Self, String> {
+        let index = try!(u32::deserialize(deserializer, &[]));
+
+        match index {
+            0 => Ok(InventoryVectorType::ERROR),
+            1 => Ok(InventoryVectorType::MSG_TX),
+            2 => Ok(InventoryVectorType::MSG_BLOCK),
+            3 => Ok(InventoryVectorType::MSG_FILTERED_BLOCK),
+            vector_type => Err(format!("Unexpected inventory vector type = {}", vector_type)),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct InventoryVector {
+    type_: InventoryVectorType,
+    hash: Vec<u8>,
+}
+
+impl Serialize for InventoryVector {
+    fn serialize(&self, serializer: &mut Serializer, _: &[Flag]) {
+        self.type_.serialize(serializer, &[]);
+        self.hash .serialize(serializer, &[Flag::FixedSize(32)]);
+    }
+}
+
+impl Deserialize for InventoryVector {
+    fn deserialize(deserializer: &mut Deserializer, _: &[Flag]) -> Result<Self, String> {
+        Ok(InventoryVector {
+            type_: try!(InventoryVectorType::deserialize(deserializer, &[])),
+            hash: try!(Bytes::deserialize(deserializer, &[Flag::FixedSize(32)])),
+        })
+    }
+}
+
+type Inventory = Vec<InventoryVector>;
+
+#[derive(Debug)]
+pub struct InvMessage {
+    inventory: Vec<InventoryVector>,
+}
+
+impl Serialize for InvMessage {
+    fn serialize(&self, serializer: &mut Serializer, _: &[Flag]) {
+        self.inventory.serialize(serializer, &[]);
+    }
+}
+
+impl Deserialize for InvMessage {
+    fn deserialize(deserializer: &mut Deserializer, _: &[Flag]) -> Result<Self, String> {
+        Ok(InvMessage {
+            inventory: try!(Inventory::deserialize(deserializer, &[])),
         })
     }
 }

@@ -216,6 +216,11 @@ impl BitcoinClient {
         self.state.lock().unwrap().queue_message(Command::Headers, Some(Box::new(response)));
     }
 
+    fn handle_inv(&self, message: InvMessage, _: mio::Token) {
+        // TODO
+        println!("Got inv {:?}", message);
+    }
+
     fn handle_pong(&self, message: PingMessage, token: mio::Token) {
         self.lock_state().get_peer(&token).map(|p| p.got_pong(message.nonce));
     }
@@ -242,6 +247,10 @@ impl BitcoinClient {
         }
 
         match header.command() {
+            &Command::Inv => {
+                let message = try!(InvMessage::deserialize(message_bytes, &[]));
+                self.handle_inv(message, token);
+            },
             &Command::Pong => {
                 // Ping and Pong message use the same format
                 let message = try!(PingMessage::deserialize(message_bytes, &[]));
