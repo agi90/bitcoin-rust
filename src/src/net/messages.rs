@@ -583,7 +583,7 @@ impl Deserialize for Command {
             "reject\0\0\0\0\0\0"   => Ok(Command::Reject),
             "getheaders\0\0"       => Ok(Command::GetHeaders),
             "headers\0\0\0\0\0"    => Ok(Command::Headers),
-            _                      => Err(format!("Unknown command: {}", data)),
+            _                      => Ok(Command::Unknown),
         }
     }
 }

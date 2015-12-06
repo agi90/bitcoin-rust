@@ -12,6 +12,8 @@ use std::collections::{VecDeque, HashMap};
 
 use super::messages::{MessageHeader, Deserialize, Deserializer};
 
+use utils::Debug;
+
 pub const SERVER: mio::Token = mio::Token(0);
 
 pub trait MessageHandler {
@@ -267,7 +269,11 @@ impl State {
             self.reading_buf = remaining;
             Ok(reading_buf)
         } else {
-            Ok(vec![])
+            // At some point this will be just an error, but for now
+            // a malformed message is probably just a bug so we need to crash
+            println!("Error: malformed message");
+            Debug::print_bytes(&self.reading_buf);
+            panic!();
         }
     }
 
