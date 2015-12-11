@@ -176,8 +176,8 @@ mod tests {
     use rustc_serialize::base64::FromBase64;
 
     fn test_hash(hash: &Fn(&[u8]) -> [u8;20], input: &str, expected: &str) {
-        let output = hash(input.from_base64().unwrap().as_slice());
-        assert_eq!(&output[..], expected.from_base64().unwrap().as_slice());
+        let output = hash(&input.from_base64().unwrap());
+        assert_eq!(&output, &expected.from_base64().unwrap()[..]);
     }
 
     #[test]

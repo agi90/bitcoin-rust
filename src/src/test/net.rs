@@ -1,6 +1,7 @@
 use net::*;
 use net::messages::*;
 use utils::Debug;
+use std::io::Cursor;
 
 #[test]
 fn test_version_message() {
@@ -36,10 +37,10 @@ fn test_version_message() {
     assert_eq!(message.start_height, 212672);
     assert_eq!(message.relay, false);
 
-    let mut serializer = Serializer::new();
-    message.serialize(&mut serializer, &[]);
+    let mut result_buffer = Cursor::new(vec![]);
+    message.serialize(&mut result_buffer, &[]);
 
-    let result = serializer.into_inner();
+    let result = result_buffer.into_inner();
     Debug::print_bytes(&result);
 
     assert_eq!(result, buffer);
