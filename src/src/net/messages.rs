@@ -609,7 +609,7 @@ impl<T: Read> Deserializer<T> {
 impl<T: Read> Deserialize<T> for Command {
     fn deserialize(deserializer: &mut Deserializer<T>, _: &[Flag]) -> Result<Self, String> {
         let data = try!(String::deserialize(deserializer, &[Flag::FixedSize(12)]));
-        match data.as_str() {
+        match data.as_ref() {
             "version\0\0\0\0\0"      => Ok(Command::Version),
             "verack\0\0\0\0\0\0"     => Ok(Command::Verack),
             "tx\0\0\0\0\0\0\0\0\0\0" => Ok(Command::Tx),
@@ -1196,8 +1196,6 @@ impl Serialize for BlockMessage {
         let mut buffer = Cursor::new(serialized);
         buffer.seek(SeekFrom::End(0)).unwrap();
         self.txns.serialize(&mut buffer, &[Flag::VariableSize]);
-
-        println!("Hash = {:?}", hash);
 
         (buffer.into_inner(), hash)
     }

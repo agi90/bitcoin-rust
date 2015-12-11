@@ -1,5 +1,3 @@
-#![feature(read_exact)]
-#![feature(convert)]
 mod utils;
 pub mod script;
 pub mod net;
