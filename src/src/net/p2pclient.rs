@@ -166,7 +166,7 @@ impl BitcoinClient {
         println!("Sending GetAddr");
         state.queue_message(Command::GetAddr, None);
 
-        let mut genesis = vec![
+        let mut genesis = [
             0x00,  0x00,  0x00,  0x00,  0x09,  0x33,  0xea,  0x01,  0xad,  0x0e,
             0xe9,  0x84,  0x20,  0x97,  0x79,  0xba,  0xae,  0xc3,  0xce,  0xd9,
             0x0f,  0xa3,  0xf4,  0x08,  0x71,  0x95,  0x26,  0xf8,  0xd7,  0x7f,
@@ -178,7 +178,7 @@ impl BitcoinClient {
             version: VERSION as u32,
             // genesis block
             block_locators: vec![genesis],
-            hash_stop: vec![0; 32],
+            hash_stop: [0; 32],
         };
 
         println!("Sending GetHeaders.");

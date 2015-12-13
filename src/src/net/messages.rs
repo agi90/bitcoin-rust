@@ -865,8 +865,8 @@ impl<T: Read> Deserialize<T> for RejectMessage {
 #[derive(Debug)]
 pub struct BlockHeader {
     pub version: i32,
-    pub prev_block: Vec<u8>,
-    pub merkle_root: Vec<u8>,
+    pub prev_block: [u8; 32],
+    pub merkle_root: [u8; 32],
     pub timestamp: time::Tm,
     pub bits: u32,
     pub nonce: u32,
@@ -889,8 +889,8 @@ impl<T: Read> Deserialize<T> for BlockHeader {
     fn deserialize(deserializer: &mut Deserializer<T>, _: &[Flag]) -> Result<Self, String> {
         Ok(BlockHeader {
             version:        try!(i32::deserialize(deserializer, &[])),
-            prev_block:   try!(Bytes::deserialize(deserializer, &[Flag::FixedSize(32)])),
-            merkle_root:  try!(Bytes::deserialize(deserializer, &[Flag::FixedSize(32)])),
+            prev_block:   try!(Hash::deserialize(deserializer, &[])),
+            merkle_root:  try!(Hash::deserialize(deserializer, &[])),
             timestamp: try!(time::Tm::deserialize(deserializer, &[Flag::ShortFormat])),
             bits:           try!(u32::deserialize(deserializer, &[])),
             nonce:          try!(u32::deserialize(deserializer, &[])),
@@ -929,25 +929,24 @@ impl<T: Read> Deserialize<T> for HeadersMessage {
 #[derive(Debug)]
 pub struct GetHeadersMessage {
     pub version: u32,
-    pub block_locators: Vec<Vec<u8>>,
-    pub hash_stop: Vec<u8>,
+    pub block_locators: Vec<[u8; 32]>,
+    pub hash_stop: [u8; 32],
 }
 
 impl Serialize for GetHeadersMessage {
     fn serialize(&self, serializer: &mut Serializer, _: &[Flag]) {
         self.       version.serialize(serializer, &[]);
-        self.block_locators.serialize(serializer, &[Flag::VariableSize, Flag::FixedSize(32)]);
-        self.     hash_stop.serialize(serializer, &[Flag::FixedSize(32)]);
+        self.block_locators.serialize(serializer, &[Flag::VariableSize]);
+        self.     hash_stop.serialize(serializer, &[]);
     }
 }
 
 impl<T: Read> Deserialize<T> for GetHeadersMessage {
     fn deserialize(deserializer: &mut Deserializer<T>, _: &[Flag]) -> Result<Self, String> {
         Ok(GetHeadersMessage {
-            version: try!(u32::deserialize(deserializer, &[])),
-            block_locators: try!(BlockLocators::deserialize(deserializer, &[Flag::VariableSize,
-                                                            Flag::FixedSize(32)])),
-            hash_stop: try!(Bytes::deserialize(deserializer, &[Flag::FixedSize(32)])),
+            version:        try!(Deserialize::deserialize(deserializer, &[])),
+            block_locators: try!(Deserialize::deserialize(deserializer, &[Flag::VariableSize])),
+            hash_stop:      try!(Deserialize::deserialize(deserializer, &[])),
         })
     }
 }
