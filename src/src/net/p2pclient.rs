@@ -22,7 +22,9 @@ use std::mem;
 
 use mio::Token;
 
-use super::store::BlobStore;
+use super::store::{BlobStore, BlockStore};
+
+use utils::Debug;
 
 struct BitcoinClient {
     version: i32,
@@ -36,7 +38,7 @@ struct State {
     message_queue: VecDeque<Vec<u8>>,
     network_type: NetworkType,
     tx_store: BlobStore<TxMessage>,
-    block_store: BlobStore<BlockMessage>,
+    block_store: BlockStore,
 }
 
 impl State {
@@ -45,22 +47,24 @@ impl State {
             peers: HashMap::new(),
             message_queue: VecDeque::new(),
             network_type: network_type,
-            tx_store: Self::get_store("tx.dat"),
-            block_store: Self::get_store("block.dat"),
+            tx_store: BlobStore::new(Self::get_store("tx.dat")),
+            block_store: BlockStore::new(Self::get_store("block.dat"), network_type),
         }
     }
 
-    fn get_store<T: Serialize + Deserialize<File>>(filename: &str) -> BlobStore<T> {
-        let file = OpenOptions::new()
+    fn get_store(filename: &str) -> File {
+        OpenOptions::new()
             .read(true)
             .write(true)
             .append(true)
             .create(true)
             .open(filename)
             // TODO: handle errors
-            .unwrap();
+            .unwrap()
+    }
 
-        BlobStore::new(file)
+    pub fn block_locators(&self) -> Vec<[u8; 32]> {
+        self.block_store.block_locators()
     }
 
     pub fn add_peer(&mut self, token: mio::Token, version: VersionMessage,
@@ -166,22 +170,13 @@ impl BitcoinClient {
         println!("Sending GetAddr");
         state.queue_message(Command::GetAddr, None);
 
-        let mut genesis = [
-            0x00,  0x00,  0x00,  0x00,  0x09,  0x33,  0xea,  0x01,  0xad,  0x0e,
-            0xe9,  0x84,  0x20,  0x97,  0x79,  0xba,  0xae,  0xc3,  0xce,  0xd9,
-            0x0f,  0xa3,  0xf4,  0x08,  0x71,  0x95,  0x26,  0xf8,  0xd7,  0x7f,
-            0x49,  0x43];
-
-        genesis.reverse();
-
         let response = GetHeadersMessage {
             version: VERSION as u32,
-            // genesis block
-            block_locators: vec![genesis],
+            block_locators: state.block_locators(),
             hash_stop: [0; 32],
         };
 
-        println!("Sending GetHeaders.");
+        println!("Sending GetBlocks.");
         state.queue_message(Command::GetBlocks, Some(Box::new(response)));
 
         Self::ping(&mut state, token);
@@ -331,6 +326,7 @@ impl BitcoinClient {
 
         match header.command() {
             &Command::Tx => {
+                Debug::print_bytes(message_bytes.inner());
                 let message = try!(TxMessage::deserialize(message_bytes, &[]));
                 self.handle_tx(message, token);
             },
@@ -366,6 +362,7 @@ impl BitcoinClient {
                 self.handle_getaddr();
             },
             &Command::Block => {
+                Debug::print_bytes(message_bytes.inner());
                 let message = try!(BlockMessage::deserialize(message_bytes, &[]));
                 self.handle_block(message);
             },
