@@ -73,7 +73,7 @@ pub trait Serialize {
 
 pub trait Serializer {
     fn push(&mut self, byte: u8);
-    fn push_bytes(&mut self, data: &[u8], bytes: usize);
+    fn push_bytes(&mut self, data: &[u8]);
     fn u_to_fixed(&mut self, x: u64, bytes: usize);
     fn serialize_u(&mut self, x: u64, bytes: usize, flags: &[Flag]);
     fn var_int(&mut self, x: u64);
@@ -86,13 +86,13 @@ impl<T: Write> Serializer for T {
         self.write_all(&[byte]).unwrap();
     }
 
-    fn push_bytes(&mut self, data: &[u8], bytes: usize) {
-        self.write_all(&data[0..bytes]).unwrap();
+    fn push_bytes(&mut self, data: &[u8]) {
+        self.write_all(&data).unwrap();
     }
 
     fn u_to_fixed(&mut self, x: u64, bytes: usize) {
         let data = self.to_bytes(x);
-        self.push_bytes(&data, bytes);
+        self.push_bytes(&data[0..bytes]);
     }
 
     fn serialize_u(&mut self, x: u64, bytes: usize, flags: &[Flag]) {
@@ -107,20 +107,20 @@ impl<T: Write> Serializer for T {
         let data = self.to_bytes(x);
 
         match x {
-            0x00000...0x0000000fd => {
+            0x00000...0x0000000fc => {
                 self.push(data[0])
             },
-            0x000fd...0x000010000 => {
+            0x000fd...0x00000ffff => {
                 self.push(0xfd);
-                self.push_bytes(&data, 2);
+                self.push_bytes(&data[0..2]);
             },
-            0x10000...0x100000000 => {
+            0x10000...0x0ffffffff => {
                 self.push(0xfe);
-                self.push_bytes(&data, 4);
+                self.push_bytes(&data[0..4]);
             },
             _ => {
                 self.push(0xff);
-                self.push_bytes(&data, 8);
+                self.push_bytes(&data[0..8]);
             },
         };
     }
@@ -232,7 +232,7 @@ impl Serialize for String {
             serializer.var_int(length as u64);
         }
 
-        serializer.push_bytes(&self.as_bytes(), length);
+        serializer.push_bytes(&self.as_bytes());
     }
 }
 
@@ -654,7 +654,8 @@ impl Serialize for Command {
             &Command::Unknown     => unimplemented!(),
         };
 
-        serializer.push_bytes(bytes, 12);
+        assert_eq!(bytes.len(), 12);
+        serializer.push_bytes(bytes);
     }
 }
 
@@ -1109,8 +1110,11 @@ impl Serialize for TxOut {
 
 impl<T: Read> Deserialize<T> for TxOut {
     fn deserialize(deserializer: &mut Deserializer<T>, _: &[Flag]) -> Result<Self, String> {
+        let value: i64 = try!(Deserialize::deserialize(deserializer, &[]));
+        assert!(value > 0);
+
         Ok(TxOut {
-            value:     try!(Deserialize::deserialize(deserializer, &[])),
+            value: value,
             pk_script: try!(Deserialize::deserialize(deserializer, &[Flag::VariableSize])),
         })
     }
@@ -1231,4 +1235,28 @@ pub fn get_serialized_message(network_type: NetworkType,
     result.extend(buffer.into_inner());
 
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use rustc_serialize::hex::FromHex;
+    use std::io::Cursor;
+    use super::*;
+    use utils::Debug;
+
+    #[test]
+    fn test() {
+        let tx = "0100000004462d18011de1ff68d8b5ebaf91a166fb11473987f61a93b85095065fae88ef8701000000fdfd0000483045022100c660a5b274b6f16befc5c9097a3a6bcd70f28d7bbacd6a38546a51e8219f10310220024475046dd15b01be75e9871ab60d725591b8174712faffa46ac7d4a35b0ed70147304402202c665edd73b2bb379ea78a1846df6573f52d9bf47bd584e40349c8643161c57602202a578c359014e9fe9b19c69f266d32b5bc838fc09f63d4cd5e3108def98bb053014c69522102ca2a810ab17249b6033a038de563983881b4069270183f3c0aba945653e442162103f480f1b648d0d5167804ad4d586e0e757cc33fde0e133fd036e45d60d2db59e12103c18131d8de99d45fb72a774cab0ccc258cd2abd9605610da20b9a232c88a3cb653aeffffffffb6a3c919fc8bab89329df0e41dd58017e59d5fec4076c4746573b7922e8fd427010000006b4830450220082991a84213115e3a718730dc0e0e248e6d429bb0b86065e23fed39be03fabe022100eb4c66f29293f0b90c0847aaca1fe37ab0afab6d47b7f1c308f309c4d63def43012103f480f1b648d0d5167804ad4d586e0e757cc33fde0e133fd036e45d60d2db59e1ffffffff3f1af8aefe6ed159cb94062d8e50ac5d9c24843899ff3bc88e6a5316f7cf7def010000006a473044022062032061b3fe964555ca785a6b08312c0db6f891eeda36721889b7bb189417d802203c129734bffe6d444aa60f17e9dcead44a8cc94a9a2d07e6227788748955481c012103223850b5215f24bbf8159783918f70f7d5b13039bffb48dda6d048d1bac2bc59ffffffff6b10231eace272420820d0379630d5ab743f9e18371dc5d5648ab7abe9ed39b3000000006a473044022036192198d39e55b73c6ab96f9e578525a368edf624471a9d9bbc15cc31cc1d2502205cef889543d938f2ac7def02ea2cc48e360dc05638a8ac6058342a726498045d0121038306b58a51ad7a6b97a02d8736676b0567e1addfd90106c8fe703663005bd20dffffffff0229520f00000000001976a914a10a4da7d425923f7296b4b9b6dc4fe2564a3ba688ac57bf0100000000001976a9143380a752d3314b80542a721a7dced925a2f5fbf488ac00000000".from_hex().unwrap();
+
+        let mut deserializer = Deserializer::new(Cursor::new(tx.clone()));
+        let tx_obj = TxMessage::deserialize(&mut deserializer, &[]).unwrap();
+
+        let mut buffer = vec![];
+        tx_obj.serialize(&mut buffer, &[]);
+
+        Debug::print_bytes(&buffer);
+        Debug::print_bytes(&tx);
+
+        assert_eq!(buffer, tx);
+    }
 }
