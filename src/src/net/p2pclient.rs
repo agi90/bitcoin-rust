@@ -7,11 +7,13 @@ use mio::tcp;
 use super::rpcengine::RPCEngine;
 use super::rpcengine;
 use super::messages::*;
+use super::expiring_cache::ExpiringCache;
 
 use super::Services;
 use super::IPAddress;
 
 use time;
+use time::Duration;
 
 use std::io::Read;
 use std::fs::{File, OpenOptions};
@@ -39,6 +41,7 @@ struct State {
     network_type: NetworkType,
     tx_store: BlobStore<TxMessage>,
     block_store: BlockStore,
+    pending_inv: ExpiringCache<[u8; 32]>,
 }
 
 impl State {
@@ -49,8 +52,21 @@ impl State {
             network_type: network_type,
             tx_store: BlobStore::new(Self::get_store("tx.dat")),
             block_store: BlockStore::new(Self::get_store("block.dat"), network_type),
+            pending_inv: ExpiringCache::new(Duration::minutes(1), Duration::seconds(10)),
         }
     }
+
+    pub fn add_inv(&mut self, hash: [u8; 32]) {
+        print!("inv for ");
+        Debug::print_bytes(&hash);
+        self.pending_inv.insert(hash);
+    }
+
+    pub fn received_data(&mut self, hash: &[u8; 32]) {
+        self.pending_inv.remove(hash);
+    }
+
+    pub fn pending_inv_len(&self) -> usize { self.pending_inv.len() }
 
     fn get_store(filename: &str) -> File {
         OpenOptions::new()
@@ -62,6 +78,8 @@ impl State {
             // TODO: handle errors
             .unwrap()
     }
+
+    pub fn height(&self) -> usize { self.block_store.height() }
 
     pub fn block_locators(&self) -> Vec<[u8; 32]> {
         self.block_store.block_locators()
@@ -164,21 +182,30 @@ impl BitcoinClient {
         }
     }
 
-    fn handle_verack(&mut self, token: mio::Token) {
-        let mut state = self.state.lock().unwrap();
-        state.get_peer(&token).unwrap().received_verack();
-        println!("Sending GetAddr");
-        state.queue_message(Command::GetAddr, None);
+    fn get_blocks(state: &mut StateMutex) {
+        if state.pending_inv_len() > 0 {
+            println!("Pending inv is not empty!");
+            return;
+        }
 
-        let response = GetHeadersMessage {
+        let message = GetHeadersMessage {
             version: VERSION as u32,
             block_locators: state.block_locators(),
             hash_stop: [0; 32],
         };
 
         println!("Sending GetBlocks.");
-        state.queue_message(Command::GetBlocks, Some(Box::new(response)));
+        state.queue_message(Command::GetBlocks, Some(Box::new(message)));
+    }
 
+    fn handle_verack(&mut self, token: mio::Token) {
+        let mut state = self.state.lock().unwrap();
+        state.get_peer(&token).unwrap().received_verack();
+        println!("Sending GetAddr");
+        state.queue_message(Command::GetAddr, None);
+
+
+        Self::get_blocks(&mut state);
         Self::ping(&mut state, token);
     }
 
@@ -188,7 +215,7 @@ impl BitcoinClient {
         state.queue_message(Command::Ping, Some(Box::new(message)));
     }
 
-    fn generate_version_message(&self, recipient_ip: IPAddress) -> VersionMessage {
+    fn generate_version_message(&self, recipient_ip: IPAddress, start_height: i32) -> VersionMessage {
         VersionMessage {
             version: self.version,
             services: self.services,
@@ -202,7 +229,7 @@ impl BitcoinClient {
             // TODO: figure it out this
             nonce: rand::random::<u64>(),
             user_agent: self.user_agent.clone(),
-            start_height: 0,
+            start_height: start_height,
             relay: true,
         }
     }
@@ -210,14 +237,17 @@ impl BitcoinClient {
     fn handle_version(&mut self, token: mio::Token, message: VersionMessage) {
         let mut state = self.state.lock().unwrap();
 
-        let version = self.generate_version_message(message.addr_recv);
+        let version = self.generate_version_message(message.addr_recv, state.height() as i32);
         state.add_peer(token, message, ConnectionType::Inbound);
 
         state.queue_message(Command::Version, Some(Box::new(version)));
         state.queue_message(Command::Verack, None);
     }
 
-    fn handle_addr(&mut self, _: AddrMessage) {
+    fn handle_addr(&mut self, message: AddrMessage) {
+        println!(" ============ Received addr.");
+        println!("{:?}", message);
+        panic!();
     }
 
     fn handle_getaddr(&self) {
@@ -236,10 +266,15 @@ impl BitcoinClient {
     fn handle_headers(&self, message: HeadersMessage) {
         // TODO: actually do something
         println!("Headers: {:?}", message.headers.len());
+        panic!();
     }
 
     fn handle_block(&self, message: BlockMessage) {
-        self.lock_state().add_block(message);
+        let mut state = self.state.lock().unwrap();
+        state.received_data(&message.hash());
+        state.add_block(message);
+
+        Self::get_blocks(&mut state);
     }
 
     fn handle_getblocks(&self, message: GetHeadersMessage) {
@@ -258,16 +293,22 @@ impl BitcoinClient {
     }
 
     fn handle_tx(&self, message: TxMessage, _: mio::Token) {
-        self.lock_state().add_tx(message);
+        let mut state = self.state.lock().unwrap();
+        state.received_data(&message.hash());
+        state.add_tx(message);
+
+        Self::get_blocks(&mut state);
     }
 
     fn handle_getdata(&self, message: InvMessage, _: mio::Token) {
         // TODO
         println!("Got getdata {:?}", message);
+        panic!();
     }
 
     fn handle_notfound(&self, message: InvMessage, _: mio::Token) {
         println!("Got notfound {:?}", message);
+        panic!();
     }
 
     fn handle_inv(&self, message: InvMessage, _: mio::Token) {
@@ -282,6 +323,7 @@ impl BitcoinClient {
                         new_data.push(InventoryVector::new(
                                 InventoryVectorType::MSG_TX,
                                 inventory.hash));
+                        state.add_inv(inventory.hash);
                     }
                 },
                 InventoryVectorType::MSG_BLOCK => {
@@ -289,6 +331,7 @@ impl BitcoinClient {
                         new_data.push(InventoryVector::new(
                                 InventoryVectorType::MSG_BLOCK,
                                 inventory.hash));
+                        state.add_inv(inventory.hash);
                     }
                 },
                 type_ => println!("Unhandled inv {:?}", type_),
@@ -326,7 +369,6 @@ impl BitcoinClient {
 
         match header.command() {
             &Command::Tx => {
-                Debug::print_bytes(message_bytes.inner());
                 let message = try!(TxMessage::deserialize(message_bytes, &[]));
                 self.handle_tx(message, token);
             },
@@ -362,7 +404,6 @@ impl BitcoinClient {
                 self.handle_getaddr();
             },
             &Command::Block => {
-                Debug::print_bytes(message_bytes.inner());
                 let message = try!(BlockMessage::deserialize(message_bytes, &[]));
                 self.handle_block(message);
             },

@@ -1,5 +1,7 @@
 mod rpcengine;
 mod store;
+mod expiring_cache;
+
 pub mod messages;
 pub mod p2pclient;
 
