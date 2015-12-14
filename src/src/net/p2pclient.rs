@@ -15,7 +15,7 @@ use super::IPAddress;
 use time;
 use time::Duration;
 
-use std::io::Read;
+use std::io::{Read, Cursor};
 use std::fs::{File, OpenOptions};
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Mutex, MutexGuard, Arc};
@@ -24,7 +24,7 @@ use std::mem;
 
 use mio::Token;
 
-use super::store::{BlobStore, BlockStore};
+use super::store::BlockStore;
 
 use utils::Debug;
 
@@ -39,7 +39,7 @@ struct State {
     peers: HashMap<mio::Token, Peer>,
     message_queue: VecDeque<Vec<u8>>,
     network_type: NetworkType,
-    tx_store: BlobStore<TxMessage>,
+    tx_store: HashMap<[u8; 32], TxMessage>,
     block_store: BlockStore,
     pending_inv: ExpiringCache<[u8; 32]>,
 }
@@ -50,7 +50,7 @@ impl State {
             peers: HashMap::new(),
             message_queue: VecDeque::new(),
             network_type: network_type,
-            tx_store: BlobStore::new(Self::get_store("tx.dat")),
+            tx_store: HashMap::new(),
             block_store: BlockStore::new(Self::get_store("block.dat"), network_type),
             pending_inv: ExpiringCache::new(Duration::minutes(1), Duration::seconds(10)),
         }
@@ -105,11 +105,11 @@ impl State {
     }
 
     pub fn has_tx(&self, hash: &[u8; 32]) -> bool {
-        self.tx_store.has(hash)
+        self.tx_store.get(hash).is_some()
     }
 
     pub fn add_tx(&mut self, tx: TxMessage) {
-        self.tx_store.insert(tx);
+        self.tx_store.insert(tx.hash(), tx);
     }
 
     pub fn has_block(&self, hash: &[u8; 32]) -> bool {
@@ -360,7 +360,7 @@ impl BitcoinClient {
     fn lock_state<'a>(&'a self) -> StateMutex { self.state.lock().unwrap() }
 
     fn handle_command(&mut self, header: MessageHeader, token: mio::Token,
-                      message_bytes: &mut Deserializer<&[u8]>) -> Result<(), String> {
+                      message_bytes: &mut Cursor<&[u8]>) -> Result<(), String> {
 
         if *header.magic() != self.lock_state().network_type {
             // This packet is not for the right version :O
@@ -438,9 +438,9 @@ impl BitcoinClient {
 
 impl rpcengine::MessageHandler for BitcoinClient {
     fn handle(&mut self, token: mio::Token, message: Vec<u8>) -> VecDeque<Vec<u8>> {
-        let mut deserializer = Deserializer::new(&message[..]);
-        let handled = MessageHeader::deserialize(&mut deserializer, &[])
-            .and_then(|m| self.handle_command(m, token, &mut deserializer));
+        let mut cursor = Cursor::new(&message[..]);
+        let handled = MessageHeader::deserialize(&mut cursor, &[])
+            .and_then(|m| self.handle_command(m, token, &mut cursor));
 
         if let Err(x) = handled {
            println!("Error: {:?}", x);

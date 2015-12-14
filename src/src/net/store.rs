@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fs::File;
 
+use super::messages::BlockMetadata;
 use super::messages::NetworkType;
 use super::messages::BlockMessage;
 use super::messages::Serialize;
@@ -9,32 +10,42 @@ use super::messages::Deserializer;
 
 use utils::Debug;
 
-enum Entry<T> {
-    NotCached(usize),
-    Cached(usize, T),
-}
+use std::io::{Seek, SeekFrom};
 
-pub struct BlobStore<T: Serialize + Deserialize<File> + Sized> {
-    store: HashMap<[u8; 32], Entry<T>>,
+pub struct BlockBlobStore {
+    store: HashMap<[u8; 32], (BlockMetadata, usize)>,
     disk_store: File,
     last_index: usize,
 }
 
-impl<T: Serialize + Deserialize<File>> BlobStore<T> {
+impl BlockBlobStore {
     pub fn has(&self, hash: &[u8]) -> bool {
         self.store.get(hash).is_some()
     }
 
-    pub fn get(&self, hash: &[u8]) -> Option<&T> {
-        self.store.get(hash).map(|entry| {
-            match entry {
-                &Entry::Cached(_, ref blob) => blob,
-                &Entry::NotCached(_)        => unimplemented!(),
-            }
-        })
+    pub fn get(&self, hash: &[u8]) -> Option<&BlockMetadata> {
+        self.store.get(hash).map(|data| &data.0)
     }
 
-    pub fn insert(&mut self, blob: T) {
+    pub fn get_block(&mut self, hash: &[u8]) -> Option<BlockMessage> {
+        self.store.get(hash).map(|data| data.1)
+            .map(|pos| {
+                self.disk_store.seek(SeekFrom::Start(pos as u64)).unwrap();
+
+                let length: u64         = Deserialize::deserialize(&mut self.disk_store, &[]).unwrap();
+                let hash: [u8; 32]      = Deserialize::deserialize(&mut self.disk_store, &[]).unwrap();
+                let block: BlockMessage = Deserialize::deserialize(&mut self.disk_store, &[]).unwrap();
+
+                let (serialized, real_hash) = block.serialize_hash();
+
+                assert_eq!(serialized.len() as u64, length);
+                assert_eq!(hash, real_hash);
+
+                block
+            })
+    }
+
+    pub fn insert(&mut self, blob: BlockMessage) {
         if self.store.get(&blob.hash()).is_none() {
             let (serialized, hash) = blob.serialize_hash();
             print!("hash = ");
@@ -45,33 +56,34 @@ impl<T: Serialize + Deserialize<File>> BlobStore<T> {
             hash.serialize(&mut self.disk_store, &[]);
             serialized.serialize(&mut self.disk_store, &[]);
 
-            self.store.insert(blob.hash(),
-                              Entry::Cached(self.last_index, blob));
+            self.store.insert(blob.hash(), (blob.into_metadata(), self.last_index));
 
             self.disk_store.sync_all().unwrap();
-
             self.last_index += 0;
         }
     }
 
-    fn get_next_object(deserializer: &mut Deserializer<File>) -> Result<(u64, [u8; 32], T), String> {
-        let length: u64    = try!(Deserialize::deserialize(deserializer, &[]));
-        let hash: [u8; 32] = try!(Deserialize::deserialize(deserializer, &[]));
-        let data: T        = try!(Deserialize::deserialize(deserializer, &[]));
+    fn get_next_object(file: &mut File) ->
+        Result<(u64, [u8; 32], BlockMetadata), String> {
+        let length: u64    = try!(Deserialize::deserialize(file, &[]));
+        let hash: [u8; 32] = try!(Deserialize::deserialize(file, &[]));
+        let data: BlockMetadata = try!(Deserialize::deserialize(file, &[]));
+        file.seek(SeekFrom::Current((length - 80) as i64)).unwrap();
 
         Ok((length, hash, data))
     }
 
-    pub fn new(disk_store: File) -> BlobStore<T> {
-        let mut deserializer = Deserializer::new(disk_store);
+    pub fn new(disk_store_: File) -> BlockBlobStore {
+        let mut disk_store = disk_store_;
+
         let mut store = HashMap::new();
         loop {
-            let pos = deserializer.pos();
-            let next = Self::get_next_object(&mut deserializer);
+            let pos = disk_store.seek(SeekFrom::Current(0)).unwrap();
+            let next = Self::get_next_object(&mut disk_store);
             match next {
-                Ok((_, hash, data)) => {
-                    assert_eq!(data.hash(), hash);
-                    store.insert(hash, Entry::Cached(pos, data));
+                Ok((_, hash, block_header)) => {
+                    // assert_eq!(data.hash(), hash);
+                    store.insert(hash, (block_header, pos as usize));
                 },
                 Err(x) => {
                     println!("Error: {:?}", x);
@@ -80,19 +92,20 @@ impl<T: Serialize + Deserialize<File>> BlobStore<T> {
             }
         }
 
-        let file = deserializer.into_inner();
-        println!("file = {:?}", file);
+        println!("file = {:?}", disk_store);
         println!("Store size = {:?}", store.len());
-        BlobStore {
+
+        let last_index = disk_store.seek(SeekFrom::Current(0)).unwrap();
+        BlockBlobStore {
             store: store,
-            disk_store: file,
-            last_index: 0,
+            disk_store: disk_store,
+            last_index: last_index as usize,
         }
     }
 }
 
 pub struct BlockStore {
-    store: BlobStore<BlockMessage>,
+    store: BlockBlobStore,
     height_store_rev: HashMap<[u8; 32], usize>,
     height_store: Vec<[u8; 32]>,
     highest_block: [u8; 32],
@@ -147,7 +160,7 @@ impl BlockStore {
     // store) so this function cannot be non-static until rust supports partial borrows. Maybe
     // double check if there are other possibilities.
     fn insert_chain(hash: &[u8; 32],
-                    store: &BlobStore<BlockMessage>,
+                    store: &BlockBlobStore,
                     height_store_rev: &mut HashMap<[u8; 32], usize>,
                     height_store: &mut Vec<[u8; 32]>,
                     highest_block: [u8; 32]) -> [u8; 32] {
@@ -174,7 +187,7 @@ impl BlockStore {
                 },
                 Some(x) => {
                     chain.push(prev_hash);
-                    prev_hash = x.prev_block();
+                    prev_hash = &x.prev_block;
                 }
             }
         }
@@ -223,7 +236,7 @@ impl BlockStore {
         };
 
         let mut store = BlockStore {
-            store: BlobStore::new(disk_store),
+            store: BlockBlobStore::new(disk_store),
             height_store_rev: HashMap::new(),
             height_store: vec![genesis],
             highest_block: genesis,
@@ -231,6 +244,9 @@ impl BlockStore {
 
         store.height_store_rev.insert(genesis, 0);
         store.reload_chain();
+
+        let highest = store.highest_block;
+        println!("highest_block = {:?}", store.store.get_block(&highest));
 
         store
     }

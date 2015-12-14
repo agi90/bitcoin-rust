@@ -28,7 +28,7 @@ fn test_version_message() {
              // last block id
              0xC0, 0x3E, 0x03, 0x00];
 
-    let mut deserializer = Deserializer::new(&buffer[..]);
+    let mut deserializer = Cursor::new(&buffer[..]);
     let message = VersionMessage::deserialize(&mut deserializer, &[]).unwrap();
 
     assert_eq!(message.version, 60002);
@@ -81,7 +81,7 @@ fn test_complete_message() {
          // last block height
          0xC0, 0x3E, 0x03, 0x00];
 
-    let mut deserializer = Deserializer::new(&buffer[..]);
+    let mut deserializer = Cursor::new(&buffer[..]);
     let header  = MessageHeader::deserialize(&mut deserializer, &[]).unwrap();
     assert_eq!(header.network_type, NetworkType::Main);
     assert_eq!(header.command, Command::Version);
