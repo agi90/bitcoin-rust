@@ -8,8 +8,9 @@ use mio::util::Slab;
 use bytes::Buf;
 use std::mem;
 use std::io::Cursor;
-use std::collections::{VecDeque, HashMap};
+use std::collections::VecDeque;
 
+use std::net::SocketAddr;
 use super::messages::{MessageHeader, Deserialize};
 
 use utils::Debug;
@@ -18,7 +19,7 @@ pub const SERVER: mio::Token = mio::Token(0);
 
 pub trait MessageHandler {
     fn handle(&mut self, token: mio::Token, message: Vec<u8>) -> VecDeque<Vec<u8>>;
-    fn get_new_messages(&mut self) -> HashMap<mio::Token, Vec<Vec<u8>>>;
+    fn new_connection(&mut self, token: mio::Token, addr: &SocketAddr) -> Vec<u8>;
 }
 
 pub struct RPCEngine {
@@ -48,57 +49,86 @@ impl RPCEngine {
 
         self.connections[token].push_message(event_loop, response);
     }
+
+    fn add_new_peer(&mut self, event_loop: &mut mio::EventLoop<RPCEngine>,
+                    socket: TcpStream) -> mio::Token {
+        // TODO: handle errors
+        let token = self.connections
+            .insert_with(|token| Connection::new(socket, token))
+            .unwrap();
+
+        event_loop.register(
+            &self.connections[token].socket,
+            token,
+            mio::EventSet::readable(),
+            mio::PollOpt::oneshot() | mio::PollOpt::edge()).unwrap();
+
+        token
+    }
+
+    fn handle_new_connection(&mut self, event_loop: &mut mio::EventLoop<RPCEngine>) {
+        match self.server.accept() {
+            Ok(Some((socket, _))) => {
+                self.add_new_peer(event_loop, socket);
+            }
+            Ok(None) => {
+                println!("the server socket wasn't actually ready");
+            }
+            Err(e) => {
+                // TODO: handle errors
+                println!("encountered error while accepting connection; err={:?}",
+                         e);
+                event_loop.shutdown();
+            }
+        }
+    }
+
+    fn handle_existing_connection(&mut self, event_loop: &mut mio::EventLoop<RPCEngine>,
+                                  token: mio::Token, events: mio::EventSet) {
+        if !self.connections.contains(token) {
+            // If we're here it means the connection has been closed already
+            return;
+        }
+
+        let rpc_vec = self.connections[token].ready(event_loop, events);
+        if self.connections[token].is_closed() {
+            let _ = self.connections.remove(token);
+        } else if rpc_vec.len() > 0 {
+            for rpc in rpc_vec {
+                self.handle_rpc(event_loop, token, rpc);
+            }
+        }
+    }
+
+    fn connect(&mut self, event_loop: &mut mio::EventLoop<RPCEngine>, addr: SocketAddr) {
+        println!("trying to connect...");
+        let socket = TcpStream::connect(&addr).unwrap();
+        let token = self.add_new_peer(event_loop, socket);
+
+        let response = self.handler.new_connection(token, &addr);
+        self.connections[token].push_message(event_loop, response);
+    }
+}
+
+pub enum Message {
+    Connect(SocketAddr),
 }
 
 impl mio::Handler for RPCEngine {
     type Timeout = ();
-    type Message = ();
+    type Message = Message;
 
     fn ready(&mut self, event_loop: &mut mio::EventLoop<RPCEngine>,
              token: mio::Token, events: mio::EventSet) {
         match token {
-            SERVER => {
-                assert!(events.is_readable());
+            SERVER => self.handle_new_connection(event_loop),
+            _ => self.handle_existing_connection(event_loop, token, events),
+        }
+    }
 
-                match self.server.accept() {
-                    Ok(Some((socket, _))) => {
-                        // TODO: handle errors
-                        let token = self.connections
-                            .insert_with(|token| Connection::new(socket, token))
-                            .unwrap();
-
-                        event_loop.register(
-                            &self.connections[token].socket,
-                            token,
-                            mio::EventSet::readable(),
-                            mio::PollOpt::oneshot() | mio::PollOpt::edge()).unwrap();
-                    }
-                    Ok(None) => {
-                        println!("the server socket wasn't actually ready");
-                    }
-                    Err(e) => {
-                        // TODO: handle errors
-                        println!("encountered error while accepting connection; err={:?}",
-                                 e);
-                        event_loop.shutdown();
-                    }
-                }
-            }
-            _ => {
-                if !self.connections.contains(token) {
-                    // If we're here it means the connection has been closed already
-                    return;
-                }
-
-                let rpc_vec = self.connections[token].ready(event_loop, events);
-                if self.connections[token].is_closed() {
-                    let _ = self.connections.remove(token);
-                } else if rpc_vec.len() > 0 {
-                    for rpc in rpc_vec {
-                        self.handle_rpc(event_loop, token, rpc);
-                    }
-                }
-            }
+    fn notify(&mut self, event_loop: &mut mio::EventLoop<RPCEngine>, msg: Message) {
+        match msg {
+            Message::Connect(addr) => self.connect(event_loop, addr),
         }
     }
 }

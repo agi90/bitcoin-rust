@@ -5,6 +5,7 @@ use std::net::SocketAddr;
 use mio::tcp;
 
 use super::rpcengine::RPCEngine;
+use super::rpcengine::Message;
 use super::rpcengine;
 use super::messages::*;
 use super::expiring_cache::ExpiringCache;
@@ -23,6 +24,7 @@ use std::thread;
 use std::mem;
 
 use mio::Token;
+use mio::Sender;
 
 use super::store::BlockStore;
 
@@ -33,6 +35,7 @@ struct BitcoinClient {
     services: Services,
     user_agent: String,
     state: Arc<Mutex<State>>,
+    channel: mio::Sender<Message>,
 }
 
 struct State {
@@ -85,9 +88,22 @@ impl State {
         self.block_store.block_locators()
     }
 
-    pub fn add_peer(&mut self, token: mio::Token, version: VersionMessage,
-                    connection_type: ConnectionType) {
-        self.peers.insert(token, Peer::new(version, connection_type));
+    pub fn add_peer(&mut self, token: mio::Token, version: Option<VersionMessage>) -> ConnectionType {
+        if let Some(peer) = self.peers.get_mut(&token) {
+            peer.version = version;
+            return ConnectionType::Outbound;
+        }
+
+        match version {
+            Some(ver) => {
+                self.peers.insert(token, Peer::new_inbound(ver));
+                ConnectionType::Inbound
+            }
+            None => {
+                self.peers.insert(token, Peer::new_outbound());
+                ConnectionType::Outbound
+            }
+        }
     }
 
     pub fn queue_message(&mut self, command: Command, message: Option<Box<Serialize>>) {
@@ -121,7 +137,7 @@ impl State {
     }
 }
 
-#[derive(Debug)]
+#[derive(PartialEq, Copy, Clone, Debug)]
 enum ConnectionType {
     Inbound,
     Outbound,
@@ -132,20 +148,31 @@ struct Peer {
     ping_time: time::Tm,
     ping: i64,
     ping_data: u64,
-    version: VersionMessage,
+    version: Option<VersionMessage>,
     verak_received: bool,
     connection_type: ConnectionType,
 }
 
 impl Peer {
-    pub fn new(version: VersionMessage, connection_type: ConnectionType) -> Peer {
+    pub fn new_inbound(version: VersionMessage) -> Peer {
         Peer {
             ping_time: time::now(),
             ping: -1,
             ping_data: 0,
-            version: version,
+            version: Some(version),
             verak_received: false,
-            connection_type: connection_type,
+            connection_type: ConnectionType::Inbound,
+        }
+    }
+
+    pub fn new_outbound() -> Peer {
+        Peer {
+            ping_time: time::now(),
+            ping: -1,
+            ping_data: 0,
+            version: None,
+            verak_received: false,
+            connection_type: ConnectionType::Outbound,
         }
     }
 
@@ -173,13 +200,18 @@ const VERSION: i32 = 70001;
 type StateMutex<'a> = MutexGuard<'a, State>;
 
 impl BitcoinClient {
-    fn new(state: Arc<Mutex<State>>) -> BitcoinClient {
-        BitcoinClient {
+    fn new(state: Arc<Mutex<State>>, channel: Sender<Message>) -> BitcoinClient {
+        let client = BitcoinClient {
             version: VERSION,
             services: Services::new(true),
             user_agent: "/Agi:0.0.1/".to_string(),
             state: state,
-        }
+            channel: channel,
+        };
+
+        client.channel.send(Message::Connect("127.0.0.1:18333".parse().unwrap())).unwrap();
+
+        client
     }
 
     fn get_blocks(state: &mut StateMutex) {
@@ -238,9 +270,11 @@ impl BitcoinClient {
         let mut state = self.state.lock().unwrap();
 
         let version = self.generate_version_message(message.addr_recv, state.height() as i32);
-        state.add_peer(token, message, ConnectionType::Inbound);
+        let connection_type = state.add_peer(token, Some(message));
 
-        state.queue_message(Command::Version, Some(Box::new(version)));
+        if connection_type == ConnectionType::Inbound {
+            state.queue_message(Command::Version, Some(Box::new(version)));
+        }
         state.queue_message(Command::Verack, None);
     }
 
@@ -255,7 +289,9 @@ impl BitcoinClient {
 
         let mut peers = vec![];
         for peer in state.get_peers().values() {
-            peers.push((peer.ping_time(), peer.version.addr_from));
+            if let Some(ref version) = peer.version {
+                peers.push((peer.ping_time(), version.addr_from));
+            }
         }
 
         let response = AddrMessage::new(peers);
@@ -450,8 +486,26 @@ impl rpcengine::MessageHandler for BitcoinClient {
         message_queue
     }
 
-    fn get_new_messages(&mut self) -> HashMap<mio::Token, Vec<Vec<u8>>> {
-        HashMap::new()
+    fn new_connection(&mut self, token: mio::Token, addr: &SocketAddr) -> Vec<u8> {
+        let mut state = self.state.lock().unwrap();
+
+        state.add_peer(token, None);
+
+        let ip = match addr {
+            &SocketAddr::V4(ipv4) => ipv4.ip().to_ipv6_mapped(),
+            &SocketAddr::V6(ipv6) => *ipv6.ip(),
+        };
+
+        let ip_address = IPAddress::new(Services::new(true), ip, addr.port());
+        let version = self.generate_version_message(ip_address, state.height() as i32);
+        let to_send = get_serialized_message(state.network_type,
+                                             Command::Version,
+                                             Some(Box::new(version)));
+
+        let mut buffer = Cursor::new(vec![]);
+        to_send.serialize(&mut buffer, &[]);
+
+        buffer.into_inner()
     }
 }
 
@@ -462,7 +516,7 @@ pub fn start(address: SocketAddr) {
                         mio::PollOpt::edge()).unwrap();
 
     let state = Arc::new(Mutex::new(State::new(NetworkType::TestNet3)));
-    let client = BitcoinClient::new(state.clone());
+    let client = BitcoinClient::new(state.clone(), event_loop.channel());
 
     println!("running bitcoin server; port={}", address.port());
     let child = thread::spawn(move || {
