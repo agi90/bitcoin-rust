@@ -464,7 +464,7 @@ pub fn start(address: SocketAddr) {
     let state = Arc::new(Mutex::new(State::new(NetworkType::TestNet3)));
     let client = BitcoinClient::new(state.clone());
 
-    println!("running bitcoin server; port=18334");
+    println!("running bitcoin server; port={}", address.port());
     let child = thread::spawn(move || {
         let mut engine = RPCEngine::new(server, Box::new(client));
         event_loop.run(&mut engine).unwrap();

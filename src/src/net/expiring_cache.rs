@@ -47,11 +47,6 @@ impl<V: Eq + Hash + Clone> ExpiringCache<V> {
         self.store.insert(key, SteadyTime::now() + self.timeout);
     }
 
-    pub fn has(&mut self, key: &V) -> bool {
-        self.check_expiration();
-        self.store.get(key).is_some()
-    }
-
     pub fn remove(&mut self, key: &V) {
         self.check_expiration();
         self.store.remove(key);

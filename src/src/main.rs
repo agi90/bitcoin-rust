@@ -13,6 +13,11 @@ extern crate mio;
 extern crate bytes;
 extern crate rand;
 
+use utils::Config;
+
 pub fn main() {
-        net::p2pclient::start("0.0.0.0:18334".parse().unwrap());
+    let config = Config::from_command_line().unwrap_or_else(
+        |e| { println!("Error: {}", e); panic!() });
+
+    net::p2pclient::start(format!("0.0.0.0:{}", config.port).parse().unwrap());
 }

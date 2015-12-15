@@ -3,6 +3,52 @@ use crypto::sha1;
 use crypto::sha2;
 use crypto::ripemd160;
 
+use std::env;
+
+pub struct Config {
+    pub port: u16,
+}
+
+impl Config {
+    pub fn from_command_line() -> Result<Config, String> {
+        let mut args = env::args();
+
+        // The first argument is the filename
+        args.next();
+
+        let mut config = Config {
+            port: 18333,
+        };
+
+        loop {
+            match args.next() {
+                Some(arg) => {
+                    let next = args.next();
+                    match arg.as_ref() {
+                        "-p" | "--port" => config.port = try!(Self::parse_port(next)),
+                        _               => try!(Self::parse_error(arg)),
+                    }
+                }
+                None => break,
+            };
+        }
+
+        Ok(config)
+    }
+
+    fn parse_port(arg: Option<String>) -> Result<u16, String> {
+        match arg {
+            Some(ref port) => port.parse()
+                .map_err(|e| format!("Unrecognized port `{}`, message: {:?}", port, e)),
+            None => Err(format!("Missing port.")),
+        }
+    }
+
+    fn parse_error(arg: String) -> Result<(), String> {
+        Err(format!("Unrecognized param: `{}`", arg))
+    }
+}
+
 pub struct IntUtils;
 
 impl IntUtils {

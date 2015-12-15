@@ -6,7 +6,6 @@ use super::messages::NetworkType;
 use super::messages::BlockMessage;
 use super::messages::Serialize;
 use super::messages::Deserialize;
-use super::messages::Deserializer;
 
 use utils::Debug;
 
