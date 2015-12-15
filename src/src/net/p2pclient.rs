@@ -294,7 +294,6 @@ impl BitcoinClient {
 
     fn handle_tx(&self, message: TxMessage, _: mio::Token) {
         let mut state = self.state.lock().unwrap();
-        state.received_data(&message.hash());
         state.add_tx(message);
 
         Self::get_blocks(&mut state);
@@ -323,7 +322,6 @@ impl BitcoinClient {
                         new_data.push(InventoryVector::new(
                                 InventoryVectorType::MSG_TX,
                                 inventory.hash));
-                        state.add_inv(inventory.hash);
                     }
                 },
                 InventoryVectorType::MSG_BLOCK => {
