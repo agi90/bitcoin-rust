@@ -8,46 +8,64 @@ use mio::util::Slab;
 use bytes::Buf;
 use std::mem;
 use std::io::Cursor;
-use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
 
 use std::net::SocketAddr;
 use super::messages::{MessageHeader, Deserialize};
 
+use std::collections::VecDeque;
+
 use utils::Debug;
+use std::thread;
+
+use std::time::Duration;
 
 pub const SERVER: mio::Token = mio::Token(0);
 
-pub trait MessageHandler {
-    fn handle(&mut self, token: mio::Token, message: Vec<u8>) -> VecDeque<Vec<u8>>;
-    fn new_connection(&mut self, token: mio::Token, addr: &SocketAddr) -> Vec<u8>;
+pub trait MessageHandler: Sync + Send {
+    fn handle(&self, token: mio::Token, message: Vec<u8>);
+    fn new_connection(&self, token: mio::Token, addr: SocketAddr) -> Vec<u8>;
 }
 
 pub struct RPCEngine {
     server: TcpListener,
     connections: Slab<Connection>,
-    handler: Box<MessageHandler>,
+    handler: Arc<Box<MessageHandler>>,
+    jobs: Arc<Mutex<VecDeque<(mio::Token, Vec<u8>)>>>,
 }
 
 impl RPCEngine {
     pub fn new(server: TcpListener, handler: Box<MessageHandler>) -> RPCEngine {
         // Token 0 is reserver for the server
         let slab = Slab::new_starting_at(mio::Token(1), 1024);
-
-        RPCEngine {
+        let engine = RPCEngine {
             server: server,
             connections: slab,
-            handler: handler,
+            handler: Arc::new(handler),
+            jobs: Arc::new(Mutex::new(VecDeque::new())),
+        };
+
+        for _ in 0..4 {
+            let handler = engine.handler.clone();
+            let jobs = engine.jobs.clone();
+            thread::spawn(move || {
+                loop {
+                    let size = jobs.lock().unwrap().len();
+                    if size > 0 {
+                        println!("len = {}", size);
+                    }
+                    let job = jobs.lock().unwrap().pop_front();
+                    match job {
+                        Some((token, rpc)) => handler.handle(token, rpc),
+                        None => {
+                            thread::sleep(Duration::from_secs(1));
+                        }
+                    }
+                }
+            });
         }
-    }
 
-    fn handle_rpc(&mut self, event_loop: &mut mio::EventLoop<RPCEngine>,
-                  token: mio::Token, rpc: Vec<u8>) {
-
-        let response: Vec<u8> = self.handler.handle(token, rpc)
-            .into_iter().flat_map(|l| l.into_iter())
-            .collect();
-
-        self.connections[token].push_message(event_loop, response);
+        engine
     }
 
     fn add_new_peer(&mut self, event_loop: &mut mio::EventLoop<RPCEngine>,
@@ -95,23 +113,29 @@ impl RPCEngine {
             let _ = self.connections.remove(token);
         } else if rpc_vec.len() > 0 {
             for rpc in rpc_vec {
-                self.handle_rpc(event_loop, token, rpc);
+                self.jobs.lock().unwrap().push_back((token, rpc));
             }
         }
     }
 
     fn connect(&mut self, event_loop: &mut mio::EventLoop<RPCEngine>, addr: SocketAddr) {
-        println!("trying to connect...");
         let socket = TcpStream::connect(&addr).unwrap();
         let token = self.add_new_peer(event_loop, socket);
 
-        let response = self.handler.new_connection(token, &addr);
+        let response = self.handler.new_connection(token, addr);
         self.connections[token].push_message(event_loop, response);
+    }
+
+    fn send_message(&mut self, event_loop: &mut mio::EventLoop<RPCEngine>,
+                    token: mio::Token, data: Vec<u8>) {
+        self.connections[token].push_message(event_loop, data);
     }
 }
 
+#[derive(Debug)]
 pub enum Message {
     Connect(SocketAddr),
+    SendMessage(mio::Token, Vec<u8>),
 }
 
 impl mio::Handler for RPCEngine {
@@ -129,6 +153,7 @@ impl mio::Handler for RPCEngine {
     fn notify(&mut self, event_loop: &mut mio::EventLoop<RPCEngine>, msg: Message) {
         match msg {
             Message::Connect(addr) => self.connect(event_loop, addr),
+            Message::SendMessage(token, data) => self.send_message(event_loop, token, data),
         }
     }
 }
