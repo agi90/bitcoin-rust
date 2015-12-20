@@ -296,6 +296,14 @@ impl <U: Serialize> Serialize for [U] {
     }
 }
 
+impl <U: Serialize> Serialize for [U; 4] {
+    fn serialize(&self, serializer: &mut Serializer, flag: &[Flag]) {
+        for x in self {
+            x.serialize(serializer, flag);
+        }
+    }
+}
+
 impl <U: Serialize> Serialize for [U; 32] {
     fn serialize(&self, serializer: &mut Serializer, flag: &[Flag]) {
         for x in self {
@@ -436,6 +444,17 @@ impl<U:Deserialize, K: Deserialize> Deserialize for (U, K) {
 
 // TODO: figure out a way to generalize this
 // probably related to https://github.com/rust-lang/rfcs/issues/1038
+impl<U: Deserialize + Default + Copy> Deserialize for [U; 4] {
+    fn deserialize(deserializer: &mut Deserializer, flags: &[Flag]) -> Result<Self, String> {
+        let mut result = [U::default(); 4];
+        for i in 0..4 {
+            result[i] = try!(U::deserialize(deserializer, flags));
+        }
+
+        Ok(result)
+    }
+}
+
 impl<U: Deserialize + Default + Copy> Deserialize for [U; 32] {
     fn deserialize(deserializer: &mut Deserializer, flags: &[Flag]) -> Result<Self, String> {
         let mut result = [U::default(); 32];
@@ -710,7 +729,7 @@ pub struct MessageHeader {
     pub network_type: NetworkType,
     pub command: Command,
     pub length: u32,
-    pub checksum: Vec<u8>,
+    pub checksum: [u8; 4],
 }
 
 impl MessageHeader {
@@ -731,10 +750,10 @@ impl Serialize for MessageHeader {
 impl Deserialize for MessageHeader {
     fn deserialize(deserializer: &mut Deserializer, _: &[Flag]) -> Result<Self, String> {
         Ok(MessageHeader {
-            network_type: try!(NetworkType::deserialize(deserializer, &[])),
-            command:          try!(Command::deserialize(deserializer, &[])),
-            length:               try!(u32::deserialize(deserializer, &[])),
-            checksum: try!(Bytes::deserialize(deserializer, &[Flag::FixedSize(4)])),
+            network_type: try!(Deserialize::deserialize(deserializer, &[])),
+            command:      try!(Deserialize::deserialize(deserializer, &[])),
+            length:       try!(Deserialize::deserialize(deserializer, &[])),
+            checksum:     try!(Deserialize::deserialize(deserializer, &[])),
         })
     }
 }
@@ -1211,7 +1230,7 @@ pub fn get_serialized_message(network_type: NetworkType,
         network_type: network_type,
         command: command,
         length: buffer.get_ref().len() as u32,
-        checksum: checksum[0..4].to_vec(),
+        checksum: [checksum[0], checksum[1], checksum[2], checksum[3]],
     };
 
     let mut header_buffer = Cursor::new(vec![]);
