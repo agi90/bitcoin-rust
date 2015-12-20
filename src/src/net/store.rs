@@ -4,8 +4,6 @@ use std::fs::File;
 use super::messages::{BlockMetadata, NetworkType, BlockMessage, Serialize,
                       Deserialize, BitcoinHash};
 
-use utils::Debug;
-
 use std::io::{Seek, SeekFrom};
 
 pub struct BlockBlobStore {
@@ -78,7 +76,7 @@ impl BlockBlobStore {
                     // assert_eq!(data.hash(), hash);
                     store.insert(hash, (block_header, pos as usize));
                 },
-                Err(x) => {
+                Err(_) => {
                     break;
                 }
             }

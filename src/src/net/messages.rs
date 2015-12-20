@@ -12,6 +12,7 @@ use std::net::Ipv6Addr;
 use std::hash::{Hash, Hasher};
 
 use std::fmt;
+use std::str;
 
 use time;
 
@@ -230,13 +231,9 @@ impl Serialize for time::Tm {
 }
 
 impl Serialize for String {
-    fn serialize(&self, serializer: &mut Serializer, flags: &[Flag]) {
+    fn serialize(&self, serializer: &mut Serializer, _: &[Flag]) {
         let length = self.as_bytes().len();
-
-        if flags.contains(&Flag::VariableSize) {
-            serializer.var_int(length as u64);
-        }
-
+        serializer.var_int(length as u64);
         serializer.push_bytes(&self.as_bytes());
     }
 }
@@ -395,13 +392,8 @@ impl Deserialize for bool {
 }
 
 impl Deserialize for String {
-    fn deserialize(deserializer: &mut Deserializer, flags: &[Flag]) -> Result<Self, String> {
-        let length_ = extract_fixed_size(flags);
-
-        let length = match length_ {
-            Some(x) => x,
-            None    => try!(deserializer.to_var_int_any()).1 as usize,
-        };
+    fn deserialize(deserializer: &mut Deserializer, _: &[Flag]) -> Result<Self, String> {
+        let length = try!(deserializer.to_var_int_any()).1 as usize;
 
         if length > 1024 {
             return Err(format!("String is too long, length={}", length));
@@ -415,16 +407,6 @@ impl Deserialize for String {
 
         String::from_utf8(bytes_vector).map_err(|e| format!("Error: {:?}", e))
     }
-}
-
-fn extract_fixed_size(flags: &[Flag]) -> Option<usize> {
-    for flag in flags {
-        if let &Flag::FixedSize(n) = flag {
-            return Some(n);
-        };
-    };
-
-    None
 }
 
 impl<U: Deserialize> Deserialize for Vec<U> {
@@ -641,25 +623,27 @@ impl Deserialize for BitcoinHash {
 
 impl Deserialize for Command {
     fn deserialize(deserializer: &mut Deserializer, _: &[Flag]) -> Result<Self, String> {
-        let data = try!(String::deserialize(deserializer, &[Flag::FixedSize(12)]));
-        match data.as_ref() {
-            "version\0\0\0\0\0"      => Ok(Command::Version),
-            "verack\0\0\0\0\0\0"     => Ok(Command::Verack),
-            "tx\0\0\0\0\0\0\0\0\0\0" => Ok(Command::Tx),
-            "inv\0\0\0\0\0\0\0\0\0"  => Ok(Command::Inv),
-            "ping\0\0\0\0\0\0\0\0"   => Ok(Command::Ping),
-            "pong\0\0\0\0\0\0\0\0"   => Ok(Command::Pong),
-            "getaddr\0\0\0\0\0"      => Ok(Command::GetAddr),
-            "notfound\0\0\0\0"       => Ok(Command::NotFound),
-            "addr\0\0\0\0\0\0\0\0"   => Ok(Command::Addr),
-            "reject\0\0\0\0\0\0"     => Ok(Command::Reject),
-            "getblocks\0\0\0"        => Ok(Command::GetBlocks),
-            "getheaders\0\0"         => Ok(Command::GetHeaders),
-            "getdata\0\0\0\0\0"      => Ok(Command::GetData),
-            "headers\0\0\0\0\0"      => Ok(Command::Headers),
-            "block\0\0\0\0\0\0\0"    => Ok(Command::Block),
-            command                  => {
-                println!("Warning: unknown command `{}`", command);
+        let mut bytes = [0; 12];
+        try!(deserializer.read_ex(&mut bytes));
+
+        match &bytes {
+            b"version\0\0\0\0\0"      => Ok(Command::Version),
+            b"verack\0\0\0\0\0\0"     => Ok(Command::Verack),
+            b"tx\0\0\0\0\0\0\0\0\0\0" => Ok(Command::Tx),
+            b"inv\0\0\0\0\0\0\0\0\0"  => Ok(Command::Inv),
+            b"ping\0\0\0\0\0\0\0\0"   => Ok(Command::Ping),
+            b"pong\0\0\0\0\0\0\0\0"   => Ok(Command::Pong),
+            b"getaddr\0\0\0\0\0"      => Ok(Command::GetAddr),
+            b"notfound\0\0\0\0"       => Ok(Command::NotFound),
+            b"addr\0\0\0\0\0\0\0\0"   => Ok(Command::Addr),
+            b"reject\0\0\0\0\0\0"     => Ok(Command::Reject),
+            b"getblocks\0\0\0"        => Ok(Command::GetBlocks),
+            b"getheaders\0\0"         => Ok(Command::GetHeaders),
+            b"getdata\0\0\0\0\0"      => Ok(Command::GetData),
+            b"headers\0\0\0\0\0"      => Ok(Command::Headers),
+            b"block\0\0\0\0\0\0\0"    => Ok(Command::Block),
+            command                   => {
+                println!("Warning: unknown command `{:?}`", str::from_utf8(command));
                 Ok(Command::Unknown)
             },
         }
@@ -787,14 +771,14 @@ impl Serialize for VersionMessage {
 
 impl Deserialize for VersionMessage {
     fn deserialize(deserializer: &mut Deserializer, _: &[Flag]) -> Result<Self, String> {
-        let version =           try!(i32::deserialize(deserializer, &[]));
-        let services =     try!(Services::deserialize(deserializer, &[]));
-        let timestamp =    try!(time::Tm::deserialize(deserializer, &[]));
-        let addr_recv =   try!(IPAddress::deserialize(deserializer, &[]));
-        let addr_from =   try!(IPAddress::deserialize(deserializer, &[]));
-        let nonce =             try!(u64::deserialize(deserializer, &[]));
-        let user_agent =     try!(String::deserialize(deserializer, &[Flag::VariableSize]));
-        let start_height =      try!(i32::deserialize(deserializer, &[]));
+        let version =      try!(Deserialize::deserialize(deserializer, &[]));
+        let services =     try!(Deserialize::deserialize(deserializer, &[]));
+        let timestamp =    try!(Deserialize::deserialize(deserializer, &[]));
+        let addr_recv =    try!(Deserialize::deserialize(deserializer, &[]));
+        let addr_from =    try!(Deserialize::deserialize(deserializer, &[]));
+        let nonce =        try!(Deserialize::deserialize(deserializer, &[]));
+        let user_agent =   try!(Deserialize::deserialize(deserializer, &[]));
+        let start_height = try!(Deserialize::deserialize(deserializer, &[]));
 
         let relay = if version > 70001 {
             try!(bool::deserialize(deserializer, &[]))
@@ -889,9 +873,9 @@ impl Serialize for RejectMessage {
 impl Deserialize for RejectMessage {
     fn deserialize(deserializer: &mut Deserializer, _: &[Flag]) -> Result<Self, String> {
         Ok(RejectMessage {
-            message: try!(String::deserialize(deserializer, &[Flag::VariableSize])),
-            ccode:       try!(u8::deserialize(deserializer, &[])),
-            reason:  try!(String::deserialize(deserializer, &[Flag::VariableSize])),
+            message: try!(Deserialize::deserialize(deserializer, &[])),
+            ccode:   try!(Deserialize::deserialize(deserializer, &[])),
+            reason:  try!(Deserialize::deserialize(deserializer, &[])),
         })
     }
 }

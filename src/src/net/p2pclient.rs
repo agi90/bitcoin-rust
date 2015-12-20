@@ -29,8 +29,6 @@ use mio::Sender;
 
 use super::store::BlockStore;
 
-use utils::Debug;
-
 struct BitcoinClient {
     version: i32,
     services: Services,
@@ -370,7 +368,7 @@ impl BitcoinClient {
         self.send_message(Command::Inv, token, Some(Box::new(InvMessage::new(inv))));
     }
 
-    fn handle_getheaders(&self, message: GetHeadersMessage, token: mio::Token) {
+    fn handle_getheaders(&self, _: GetHeadersMessage, token: mio::Token) {
         // TODO: actually do something
         let response = HeadersMessage::new(vec![]);
         self.send_message(Command::Headers, token, Some(Box::new(response)));
