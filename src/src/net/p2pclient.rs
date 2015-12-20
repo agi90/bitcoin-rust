@@ -139,6 +139,10 @@ impl State {
         self.block_store.get_metadata(hash)
     }
 
+    pub fn block_height(&self, hash: &[u8; 32]) -> Option<usize> {
+        self.block_store.get_height(hash)
+    }
+
     pub fn has_block(&self, hash: &[u8; 32]) -> bool {
         self.block_store.has(hash)
     }
@@ -220,8 +224,6 @@ impl BitcoinClient {
             network_type: network_type,
         };
 
-        // client.channel.send(Message::Connect("127.0.0.1:18333".parse().unwrap())).unwrap();
-
         client
     }
 
@@ -231,7 +233,12 @@ impl BitcoinClient {
                                              command,
                                              message);
 
-        self.channel.send(Message::SendMessage(token, to_send)).unwrap();
+        match self.channel.send(Message::SendMessage(token, to_send)) {
+            Ok(_) => {},
+            Err(e) => {
+                println!("Error: {:?}", e);
+            }
+        }
     }
 
     fn get_blocks(&self, state: &mut StateMutex, token: mio::Token) {
@@ -341,7 +348,7 @@ impl BitcoinClient {
 
     fn handle_getblocks(&self, message: GetHeadersMessage, token: mio::Token) {
         for hash in message.block_locators.iter().rev() {
-            if self.lock_state().has_block(hash) {
+            if self.lock_state().block_height(hash).is_some() {
                 self.send_inv(hash, token);
                 break;
             }

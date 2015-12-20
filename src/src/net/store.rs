@@ -110,6 +110,10 @@ impl BlockStore {
         self.store.get(hash)
     }
 
+    pub fn get_height(&self, hash: &[u8; 32]) -> Option<usize> {
+        self.height_store_rev.get(hash).cloned()
+    }
+
     pub fn height(&self) -> usize { self.height_store_rev[&self.highest_block] }
 
     pub fn insert(&mut self, block: BlockMessage, hash: &[u8; 32], data: &[u8]) {
