@@ -5,6 +5,34 @@ use time::SteadyTime;
 use std::hash::Hash;
 use std::mem;
 
+#[derive(Debug)]
+pub struct Timeout<T: Default + Copy> {
+    value: T,
+    timeout: time::SteadyTime,
+}
+
+impl<T: Default + Copy> Timeout<T> {
+    pub fn new()-> Timeout<T> {
+        Timeout {
+            value: T::default(),
+            timeout: SteadyTime::now(),
+        }
+    }
+
+    pub fn set(&mut self, value: T, timeout: time::Duration) {
+        self.value = value;
+        self.timeout = SteadyTime::now() + timeout;
+    }
+
+    pub fn get(&self) -> T {
+        if self.timeout < SteadyTime::now() {
+            T::default()
+        } else {
+            self.value
+        }
+    }
+}
+
 pub struct ExpiringCache<V> {
     store: HashMap<V, time::SteadyTime>,
     timeout: time::Duration,
@@ -29,7 +57,6 @@ impl<V: Eq + Hash + Clone> ExpiringCache<V> {
             return;
         }
 
-        println!("CHECKING! len = {:?}", self.store.len());
         let mut store = mem::replace(&mut self.store, HashMap::new());
 
         store = store.into_iter()
@@ -38,7 +65,6 @@ impl<V: Eq + Hash + Clone> ExpiringCache<V> {
 
         mem::replace(&mut self.store, store);
 
-        println!("END CHECKING! len = {:?}", self.store.len());
         self.last_checked = SteadyTime::now();
     }
 
@@ -54,4 +80,3 @@ impl<V: Eq + Hash + Clone> ExpiringCache<V> {
 
     pub fn len(&self) -> usize { self.store.len() }
 }
-

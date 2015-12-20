@@ -24,7 +24,7 @@ impl Services {
 pub struct IPAddress {
     services: Services,
     pub address: net::Ipv6Addr,
-    port: u16,
+    pub port: u16,
 }
 
 impl IPAddress {

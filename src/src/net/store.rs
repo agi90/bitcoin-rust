@@ -31,9 +31,9 @@ impl BlockBlobStore {
             .map(|pos| {
                 self.disk_store.seek(SeekFrom::Start(pos as u64)).unwrap();
 
-                let length: u64         = Deserialize::deserialize(&mut self.disk_store, &[]).unwrap();
-                let hash: [u8; 32]      = Deserialize::deserialize(&mut self.disk_store, &[]).unwrap();
-                let block: BlockMessage = Deserialize::deserialize(&mut self.disk_store, &[]).unwrap();
+                let length: u64        = Deserialize::deserialize(&mut self.disk_store, &[]).unwrap();
+                let hash: [u8; 32]     = Deserialize::deserialize(&mut self.disk_store, &[]).unwrap();
+                let block: BlockMessage= Deserialize::deserialize(&mut self.disk_store, &[]).unwrap();
 
                 let (serialized, real_hash) = block.serialize_hash();
 
@@ -44,18 +44,14 @@ impl BlockBlobStore {
             })
     }
 
-    pub fn insert(&mut self, blob: BlockMessage) {
-        if self.store.get(&blob.hash()).is_none() {
-            let (serialized, hash) = blob.serialize_hash();
-            print!("hash = ");
-            Debug::print_bytes(&hash);
-
+    pub fn insert(&mut self, block: BlockMessage, hash: &[u8; 32], data: &[u8]) {
+        if self.store.get(hash).is_none() {
             // Let's save the length and hash to double check data on disk
-            (serialized.len() as u64).serialize(&mut self.disk_store, &[]);
+            (data.len() as u64).serialize(&mut self.disk_store, &[]);
             hash.serialize(&mut self.disk_store, &[]);
-            serialized.serialize(&mut self.disk_store, &[]);
+            data.serialize(&mut self.disk_store, &[]);
 
-            self.store.insert(blob.hash(), (blob.into_metadata(), self.last_index));
+            self.store.insert(hash.clone(), (block.into_metadata(), self.last_index));
 
             self.disk_store.sync_all().unwrap();
             self.last_index += 0;
@@ -91,9 +87,6 @@ impl BlockBlobStore {
             }
         }
 
-        println!("file = {:?}", disk_store);
-        println!("Store size = {:?}", store.len());
-
         let last_index = disk_store.seek(SeekFrom::Current(0)).unwrap();
         BlockBlobStore {
             store: store,
@@ -113,14 +106,17 @@ pub struct BlockStore {
 impl BlockStore {
     pub fn has(&self, hash: &[u8; 32]) -> bool { self.store.has(hash) }
 
+    pub fn get_metadata(&self, hash: &[u8; 32]) -> Option<&BlockMetadata> {
+        self.store.get(hash)
+    }
+
     pub fn height(&self) -> usize { self.height_store_rev[&self.highest_block] }
 
-    pub fn insert(&mut self, block: BlockMessage) {
-        let hash = block.hash();
-        self.store.insert(block);
+    pub fn insert(&mut self, block: BlockMessage, hash: &[u8; 32], data: &[u8]) {
+        self.store.insert(block, hash, data);
 
         self.highest_block =
-            Self::insert_chain(&hash, &self.store, &mut self.height_store_rev,
+            Self::insert_chain(hash, &self.store, &mut self.height_store_rev,
                                &mut self.height_store, self.highest_block);
     }
 
@@ -137,10 +133,8 @@ impl BlockStore {
         let mut index = 0;
         let mut locator = vec![];
 
-        println!("height {}", height);
         while height > index {
             locator.push(self.height_store[height - index]);
-            println!("locator {}", height - index);
             if index < 10 {
                 index += 1;
             } else {
@@ -148,7 +142,6 @@ impl BlockStore {
             }
         }
 
-        println!("locator {}", 0);
         locator.push(self.height_store[0]);
         locator
     }
@@ -180,7 +173,6 @@ impl BlockStore {
 
             match el {
                 None => {
-                    println!("Error: invalid chain!");
                     valid_chain = false;
                     break;
                 },
@@ -243,9 +235,6 @@ impl BlockStore {
 
         store.height_store_rev.insert(genesis, 0);
         store.reload_chain();
-
-        let highest = store.highest_block;
-        println!("highest_block = {:?}", store.store.get_block(&highest));
 
         store
     }

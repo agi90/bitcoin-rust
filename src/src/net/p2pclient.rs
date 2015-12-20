@@ -9,6 +9,7 @@ use super::rpcengine::Message;
 use super::rpcengine;
 use super::messages::*;
 use super::expiring_cache::ExpiringCache;
+use super::expiring_cache::Timeout;
 
 use super::Services;
 use super::IPAddress;
@@ -18,6 +19,7 @@ use time::Duration;
 
 use std::io::{Read, Cursor};
 use std::fs::{File, OpenOptions};
+use std::net::ToSocketAddrs;
 use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard, Arc};
 use std::thread;
@@ -45,13 +47,30 @@ struct State {
     pending_inv: ExpiringCache<[u8; 32]>,
 }
 
+#[derive(PartialEq, Copy, Clone, Debug)]
+enum ConnectionType {
+    Inbound,
+    Outbound,
+}
+
+#[derive(Debug)]
+struct Peer {
+    ping_time: time::Tm,
+    ping: i64,
+    ping_data: u64,
+    version: Option<VersionMessage>,
+    verak_received: bool,
+    connection_type: ConnectionType,
+    waiting_for_blocks: Timeout<bool>,
+}
+
 impl State {
     pub fn new(network_type: NetworkType) -> State {
         State {
             peers: HashMap::new(),
             tx_store: HashMap::new(),
             block_store: BlockStore::new(Self::get_store("block.dat"), network_type),
-            pending_inv: ExpiringCache::new(Duration::minutes(10), Duration::seconds(10)),
+            pending_inv: ExpiringCache::new(Duration::minutes(2), Duration::seconds(10)),
         }
     }
 
@@ -116,29 +135,17 @@ impl State {
         self.tx_store.insert(tx.hash(), tx);
     }
 
+    pub fn get_block_metadata(&self, hash: &[u8; 32]) -> Option<&BlockMetadata> {
+        self.block_store.get_metadata(hash)
+    }
+
     pub fn has_block(&self, hash: &[u8; 32]) -> bool {
         self.block_store.has(hash)
     }
 
-    pub fn add_block(&mut self, block: BlockMessage) {
-        self.block_store.insert(block);
+    pub fn add_block(&mut self, block: BlockMessage, hash: &[u8; 32], data: &[u8]) {
+        self.block_store.insert(block, hash, data);
     }
-}
-
-#[derive(PartialEq, Copy, Clone, Debug)]
-enum ConnectionType {
-    Inbound,
-    Outbound,
-}
-
-#[derive(Debug)]
-struct Peer {
-    ping_time: time::Tm,
-    ping: i64,
-    ping_data: u64,
-    version: Option<VersionMessage>,
-    verak_received: bool,
-    connection_type: ConnectionType,
 }
 
 impl Peer {
@@ -150,6 +157,7 @@ impl Peer {
             version: Some(version),
             verak_received: false,
             connection_type: ConnectionType::Inbound,
+            waiting_for_blocks: Timeout::new(),
         }
     }
 
@@ -161,7 +169,20 @@ impl Peer {
             version: None,
             verak_received: false,
             connection_type: ConnectionType::Outbound,
+            waiting_for_blocks: Timeout::new(),
         }
+    }
+
+    pub fn sent_getblocks(&mut self) {
+        self.waiting_for_blocks.set(true, Duration::seconds(15));
+    }
+
+    pub fn got_inv(&mut self) {
+        self.waiting_for_blocks.set(false, Duration::seconds(0));
+    }
+
+    pub fn is_waiting_for_blocks(&self) -> bool {
+        self.waiting_for_blocks.get()
     }
 
     pub fn ping_time(&self) -> time::Tm { self.ping_time }
@@ -214,10 +235,15 @@ impl BitcoinClient {
     }
 
     fn get_blocks(&self, state: &mut StateMutex, token: mio::Token) {
-        if state.pending_inv_len() > 0 {
-            println!("Pending inv is not empty! size = {}", state.pending_inv_len());
+        if state.pending_inv_len() > 100 {
             return;
         }
+
+        if state.get_peer(&token).unwrap().is_waiting_for_blocks() {
+            return;
+        }
+
+        state.get_peer(&token).map(|p| p.sent_getblocks());
 
         let message = GetHeadersMessage {
             version: VERSION as u32,
@@ -225,15 +251,15 @@ impl BitcoinClient {
             hash_stop: [0; 32],
         };
 
-        println!("Sending GetBlocks.");
         self.send_message(Command::GetBlocks, token, Some(Box::new(message)));
     }
 
     fn handle_verack(&self, token: mio::Token) {
         let mut state = self.state.lock().unwrap();
         state.get_peer(&token).unwrap().received_verack();
-        println!("Sending GetAddr");
+
         self.send_message(Command::GetAddr, token, None);
+
         self.get_blocks(&mut state, token);
         self.ping(&mut state, token);
     }
@@ -269,17 +295,18 @@ impl BitcoinClient {
         let version = self.generate_version_message(message.addr_recv, state.height() as i32);
         let connection_type = state.add_peer(token, Some(message));
 
-        self.send_message(Command::Verack, token, None);
         if connection_type == ConnectionType::Inbound {
-            println!("Sending Version...");
             self.send_message(Command::Version, token, Some(Box::new(version)));
         }
+        self.send_message(Command::Verack, token, None);
     }
 
     fn handle_addr(&self, message: AddrMessage, _: mio::Token) {
-        println!(" ============ Received addr.");
-        println!("{:?}", message);
-        panic!();
+        for (_,addr) in message.addr_list {
+            for socket in (addr.address, addr.port).to_socket_addrs().unwrap() {
+                self.channel.send(Message::Connect(socket)).unwrap();
+            }
+        }
     }
 
     fn handle_getaddr(&self, token: mio::Token) {
@@ -303,16 +330,38 @@ impl BitcoinClient {
         panic!();
     }
 
-    fn handle_block(&self, message: BlockMessage, token: mio::Token) {
+    fn handle_block(&self, message: BlockMessage, token: mio::Token, data: &Cursor<&[u8]>) {
+        let hash = message.hash();
         let mut state = self.state.lock().unwrap();
-        state.received_data(&message.hash());
-        state.add_block(message);
+        state.received_data(&hash);
+        state.add_block(message, &hash, data.get_ref());
 
         self.get_blocks(&mut state, token);
     }
 
-    fn handle_getblocks(&self, message: GetHeadersMessage, _: mio::Token) {
-        println!("GetBlocks = {:?}", message);
+    fn handle_getblocks(&self, message: GetHeadersMessage, token: mio::Token) {
+        for hash in message.block_locators.iter().rev() {
+            if self.lock_state().has_block(hash) {
+                self.send_inv(hash, token);
+                break;
+            }
+        }
+    }
+
+    fn send_inv(&self, start_hash: &[u8; 32], token: mio::Token) {
+        let state = self.state.lock().unwrap();
+        let mut cur_hash = start_hash.clone();
+        let mut cur = state.get_block_metadata(&cur_hash).unwrap();
+        let mut inv = vec![];
+
+        for _ in 0..500 {
+            inv.push(InventoryVector::new(InventoryVectorType::MSG_BLOCK,
+                                          cur_hash));
+            cur_hash = cur.prev_block;
+            cur = state.get_block_metadata(&cur_hash).unwrap();
+        }
+
+        self.send_message(Command::Inv, token, Some(Box::new(InvMessage::new(inv))));
     }
 
     fn handle_getheaders(&self, message: GetHeadersMessage, token: mio::Token) {
@@ -372,6 +421,8 @@ impl BitcoinClient {
 
         self.send_message(Command::GetData, token,
                           Some(Box::new(InvMessage::new(new_data))));
+
+        state.get_peer(&token).unwrap().got_inv();
     }
 
     fn handle_pong(&self, message: PingMessage, token: mio::Token) {
@@ -436,7 +487,7 @@ impl BitcoinClient {
             },
             &Command::Block => {
                 let message = try!(BlockMessage::deserialize(message_bytes, &[]));
-                self.handle_block(message, token);
+                self.handle_block(message, token, message_bytes);
             },
             &Command::GetBlocks => {
                 let message = try!(GetHeadersMessage::deserialize(message_bytes, &[]));
@@ -478,7 +529,7 @@ impl rpcengine::MessageHandler for BitcoinClient {
         };
     }
 
-    fn new_connection(&self, token: mio::Token, addr: SocketAddr) -> Vec<u8> {
+    fn new_connection(&self, token: mio::Token, addr: SocketAddr) {
         let mut state = self.state.lock().unwrap();
 
         state.add_peer(token, None);
@@ -490,14 +541,8 @@ impl rpcengine::MessageHandler for BitcoinClient {
 
         let ip_address = IPAddress::new(Services::new(true), ip, addr.port());
         let version = self.generate_version_message(ip_address, state.height() as i32);
-        let to_send = get_serialized_message(self.network_type,
-                                             Command::Version,
-                                             Some(Box::new(version)));
 
-        let mut buffer = Cursor::new(vec![]);
-        to_send.serialize(&mut buffer, &[]);
-
-        buffer.into_inner()
+        self.send_message(Command::Version, token, Some(Box::new(version)));
     }
 }
 
