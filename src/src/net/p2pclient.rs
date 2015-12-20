@@ -42,9 +42,9 @@ struct BitcoinClient {
 
 struct State {
     peers: HashMap<mio::Token, Peer>,
-    tx_store: HashMap<[u8; 32], TxMessage>,
+    tx_store: HashMap<BitcoinHash, TxMessage>,
     block_store: BlockStore,
-    pending_inv: ExpiringCache<[u8; 32]>,
+    pending_inv: ExpiringCache<BitcoinHash>,
 }
 
 #[derive(PartialEq, Copy, Clone, Debug)]
@@ -74,13 +74,12 @@ impl State {
         }
     }
 
-    pub fn add_inv(&mut self, hash: [u8; 32]) {
-        print!("inv for ");
-        Debug::print_bytes(&hash);
+    pub fn add_inv(&mut self, hash: BitcoinHash) {
+        print!("inv for {:?}", hash);
         self.pending_inv.insert(hash);
     }
 
-    pub fn received_data(&mut self, hash: &[u8; 32]) {
+    pub fn received_data(&mut self, hash: &BitcoinHash) {
         self.pending_inv.remove(hash);
     }
 
@@ -99,7 +98,7 @@ impl State {
 
     pub fn height(&self) -> usize { self.block_store.height() }
 
-    pub fn block_locators(&self) -> Vec<[u8; 32]> {
+    pub fn block_locators(&self) -> Vec<BitcoinHash> {
         self.block_store.block_locators()
     }
 
@@ -127,7 +126,7 @@ impl State {
         self.peers.get_mut(token)
     }
 
-    pub fn has_tx(&self, hash: &[u8; 32]) -> bool {
+    pub fn has_tx(&self, hash: &BitcoinHash) -> bool {
         self.tx_store.get(hash).is_some()
     }
 
@@ -135,19 +134,19 @@ impl State {
         self.tx_store.insert(tx.hash(), tx);
     }
 
-    pub fn get_block_metadata(&self, hash: &[u8; 32]) -> Option<&BlockMetadata> {
+    pub fn get_block_metadata(&self, hash: &BitcoinHash) -> Option<&BlockMetadata> {
         self.block_store.get_metadata(hash)
     }
 
-    pub fn block_height(&self, hash: &[u8; 32]) -> Option<usize> {
+    pub fn block_height(&self, hash: &BitcoinHash) -> Option<usize> {
         self.block_store.get_height(hash)
     }
 
-    pub fn has_block(&self, hash: &[u8; 32]) -> bool {
+    pub fn has_block(&self, hash: &BitcoinHash) -> bool {
         self.block_store.has(hash)
     }
 
-    pub fn add_block(&mut self, block: BlockMessage, hash: &[u8; 32], data: &[u8]) {
+    pub fn add_block(&mut self, block: BlockMessage, hash: &BitcoinHash, data: &[u8]) {
         self.block_store.insert(block, hash, data);
     }
 }
@@ -255,7 +254,7 @@ impl BitcoinClient {
         let message = GetHeadersMessage {
             version: VERSION as u32,
             block_locators: state.block_locators(),
-            hash_stop: [0; 32],
+            hash_stop: BitcoinHash::new([0; 32]),
         };
 
         self.send_message(Command::GetBlocks, token, Some(Box::new(message)));
@@ -355,7 +354,7 @@ impl BitcoinClient {
         }
     }
 
-    fn send_inv(&self, start_hash: &[u8; 32], token: mio::Token) {
+    fn send_inv(&self, start_hash: &BitcoinHash, token: mio::Token) {
         let state = self.state.lock().unwrap();
         let mut cur_hash = start_hash.clone();
         let mut cur = state.get_block_metadata(&cur_hash).unwrap();
@@ -373,11 +372,6 @@ impl BitcoinClient {
 
     fn handle_getheaders(&self, message: GetHeadersMessage, token: mio::Token) {
         // TODO: actually do something
-        for h in message.block_locators {
-            let mut clone = h.clone();
-            clone.reverse();
-        }
-
         let response = HeadersMessage::new(vec![]);
         self.send_message(Command::Headers, token, Some(Box::new(response)));
     }
@@ -494,6 +488,7 @@ impl BitcoinClient {
             },
             &Command::Block => {
                 let message = try!(BlockMessage::deserialize(message_bytes, &[]));
+                assert_eq!(message_bytes.get_ref().len() as u64, message_bytes.position());
                 self.handle_block(message, token, message_bytes);
             },
             &Command::GetBlocks => {

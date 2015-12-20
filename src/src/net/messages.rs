@@ -4,8 +4,14 @@ use super::IPAddress;
 use super::Services;
 use utils::CryptoUtils;
 
+use std::ops::Deref;
+
 use std::io::{Cursor, SeekFrom, Seek, Read, Write};
 use std::net::Ipv6Addr;
+
+use std::hash::{Hash, Hasher};
+
+use std::fmt;
 
 use time;
 
@@ -49,23 +55,23 @@ pub enum Flag {
     ShortFormat,
 }
 
-type Hash = [u8; 32];
 type Bytes = Vec<u8>;
 type BlockLocators = Vec<Bytes>;
 type AddrList = Vec<(time::Tm, IPAddress)>;
 
+
 pub trait Serialize {
     fn serialize(&self, serializer: &mut Serializer, flag: &[Flag]);
 
-    fn serialize_hash(&self) -> (Vec<u8>, [u8; 32]) {
+    fn serialize_hash(&self) -> (Vec<u8>, BitcoinHash) {
         let mut buffer = Cursor::new(vec![]);
         self.serialize(&mut buffer, &[]);
 
         let hash = CryptoUtils::sha256(&CryptoUtils::sha256(buffer.get_ref()));
-        (buffer.into_inner(), hash)
+        (buffer.into_inner(), BitcoinHash::new(hash))
     }
 
-    fn hash(&self) -> [u8; 32] {
+    fn hash(&self) -> BitcoinHash {
         self.serialize_hash().1
     }
 }
@@ -579,6 +585,60 @@ impl<T: Read> Deserializer for T {
     }
 }
 
+#[derive(PartialEq, Eq, Clone, Copy)]
+pub struct BitcoinHash {
+    data: [u8; 32],
+}
+
+impl BitcoinHash {
+    pub fn new(data: [u8; 32]) -> BitcoinHash {
+        BitcoinHash {
+            data: data,
+        }
+    }
+}
+
+impl Deref for BitcoinHash {
+    type Target = [u8; 32];
+
+    fn deref(&self) -> &[u8; 32] {
+        &self.data
+    }
+}
+
+impl Hash for BitcoinHash {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        Hash::hash(&self.data, state);
+    }
+}
+
+impl fmt::Debug for BitcoinHash {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        for i in 0..32 {
+            let result = write!(f, "{:02X}", self[i]);
+            if result.is_err() {
+                return result;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl Serialize for BitcoinHash {
+    fn serialize(&self, serializer: &mut Serializer, _: &[Flag]) {
+        self.data.serialize(serializer, &[]);
+    }
+}
+
+impl Deserialize for BitcoinHash {
+    fn deserialize(deserializer: &mut Deserializer, _: &[Flag]) -> Result<Self, String> {
+        Ok(BitcoinHash {
+            data: try!(Deserialize::deserialize(deserializer, &[])),
+        })
+    }
+}
+
 impl Deserialize for Command {
     fn deserialize(deserializer: &mut Deserializer, _: &[Flag]) -> Result<Self, String> {
         let data = try!(String::deserialize(deserializer, &[Flag::FixedSize(12)]));
@@ -867,8 +927,8 @@ impl Deserialize for HeadersMessage {
 #[derive(Debug)]
 pub struct GetHeadersMessage {
     pub version: u32,
-    pub block_locators: Vec<[u8; 32]>,
-    pub hash_stop: [u8; 32],
+    pub block_locators: Vec<BitcoinHash>,
+    pub hash_stop: BitcoinHash,
 }
 
 impl Serialize for GetHeadersMessage {
@@ -928,7 +988,7 @@ impl Deserialize for InventoryVectorType {
 #[derive(Debug)]
 pub struct InventoryVector {
     pub type_: InventoryVectorType,
-    pub hash: [u8; 32],
+    pub hash: BitcoinHash,
 }
 
 impl Serialize for InventoryVector {
@@ -948,7 +1008,7 @@ impl Deserialize for InventoryVector {
 }
 
 impl InventoryVector {
-    pub fn new(type_: InventoryVectorType, hash: [u8; 32]) -> InventoryVector {
+    pub fn new(type_: InventoryVectorType, hash: BitcoinHash) -> InventoryVector {
         InventoryVector {
             type_: type_,
             hash: hash,
@@ -987,7 +1047,7 @@ impl InvMessage {
 
 #[derive(Debug)]
 pub struct OutPoint {
-    hash: [u8; 32],
+    hash: BitcoinHash,
     index: u32,
 }
 
@@ -1001,7 +1061,7 @@ impl Serialize for OutPoint {
 impl Deserialize for OutPoint {
     fn deserialize(deserializer: &mut Deserializer, _: &[Flag]) -> Result<Self, String> {
         Ok(OutPoint {
-            hash:  try!(Hash::deserialize(deserializer, &[])),
+            hash:  try!(BitcoinHash::deserialize(deserializer, &[])),
             index: try!( u32::deserialize(deserializer, &[])),
         })
     }
@@ -1088,8 +1148,8 @@ impl Deserialize for TxMessage {
 #[derive(Debug)]
 pub struct BlockMetadata {
     version: i32,
-    pub prev_block: [u8; 32],
-    merkle_root: [u8; 32],
+    pub prev_block: BitcoinHash,
+    merkle_root: BitcoinHash,
     timestamp: time::Tm,
     bits: u32,
     nonce: u32,
@@ -1121,12 +1181,12 @@ impl Deserialize for BlockMetadata {
 
 #[derive(Debug)]
 pub struct BlockMessage {
-    metadata: BlockMetadata,
-    txns: Vec<TxMessage>,
+    pub metadata: BlockMetadata,
+    pub txns: Vec<TxMessage>,
 }
 
 impl BlockMessage {
-    pub fn prev_block(&self) -> &[u8; 32] { &self.metadata.prev_block }
+    pub fn prev_block(&self) -> &BitcoinHash { &self.metadata.prev_block }
     pub fn into_metadata(self) -> BlockMetadata { self.metadata }
 }
 
@@ -1136,7 +1196,7 @@ impl Serialize for BlockMessage {
         self.txns    .serialize(serializer, &[Flag::VariableSize]);
     }
 
-    fn serialize_hash(&self) -> (Vec<u8>, [u8; 32]) {
+    fn serialize_hash(&self) -> (Vec<u8>, BitcoinHash) {
         let (serialized, hash) = self.metadata.serialize_hash();
         let mut buffer = Cursor::new(serialized);
         buffer.seek(SeekFrom::End(0)).unwrap();

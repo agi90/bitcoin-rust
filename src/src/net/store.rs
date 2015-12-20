@@ -1,38 +1,35 @@
 use std::collections::HashMap;
 use std::fs::File;
 
-use super::messages::BlockMetadata;
-use super::messages::NetworkType;
-use super::messages::BlockMessage;
-use super::messages::Serialize;
-use super::messages::Deserialize;
+use super::messages::{BlockMetadata, NetworkType, BlockMessage, Serialize,
+                      Deserialize, BitcoinHash};
 
 use utils::Debug;
 
 use std::io::{Seek, SeekFrom};
 
 pub struct BlockBlobStore {
-    store: HashMap<[u8; 32], (BlockMetadata, usize)>,
+    store: HashMap<BitcoinHash, (BlockMetadata, usize)>,
     disk_store: File,
     last_index: usize,
 }
 
 impl BlockBlobStore {
-    pub fn has(&self, hash: &[u8]) -> bool {
+    pub fn has(&self, hash: &BitcoinHash) -> bool {
         self.store.get(hash).is_some()
     }
 
-    pub fn get(&self, hash: &[u8]) -> Option<&BlockMetadata> {
+    pub fn get(&self, hash: &BitcoinHash) -> Option<&BlockMetadata> {
         self.store.get(hash).map(|data| &data.0)
     }
 
-    pub fn get_block(&mut self, hash: &[u8]) -> Option<BlockMessage> {
+    pub fn get_block(&mut self, hash: &BitcoinHash) -> Option<BlockMessage> {
         self.store.get(hash).map(|data| data.1)
             .map(|pos| {
                 self.disk_store.seek(SeekFrom::Start(pos as u64)).unwrap();
 
                 let length: u64        = Deserialize::deserialize(&mut self.disk_store, &[]).unwrap();
-                let hash: [u8; 32]     = Deserialize::deserialize(&mut self.disk_store, &[]).unwrap();
+                let hash: BitcoinHash  = Deserialize::deserialize(&mut self.disk_store, &[]).unwrap();
                 let block: BlockMessage= Deserialize::deserialize(&mut self.disk_store, &[]).unwrap();
 
                 let (serialized, real_hash) = block.serialize_hash();
@@ -44,7 +41,7 @@ impl BlockBlobStore {
             })
     }
 
-    pub fn insert(&mut self, block: BlockMessage, hash: &[u8; 32], data: &[u8]) {
+    pub fn insert(&mut self, block: BlockMessage, hash: &BitcoinHash, data: &[u8]) {
         if self.store.get(hash).is_none() {
             // Let's save the length and hash to double check data on disk
             (data.len() as u64).serialize(&mut self.disk_store, &[]);
@@ -59,13 +56,14 @@ impl BlockBlobStore {
     }
 
     fn get_next_object(file: &mut File) ->
-        Result<(u64, [u8; 32], BlockMetadata), String> {
-        let length: u64    = try!(Deserialize::deserialize(file, &[]));
-        let hash: [u8; 32] = try!(Deserialize::deserialize(file, &[]));
-        let data: BlockMetadata = try!(Deserialize::deserialize(file, &[]));
-        file.seek(SeekFrom::Current((length - 80) as i64)).unwrap();
+        Result<(u64, BitcoinHash, BlockMetadata), String> {
+        let length: u64 = try!(Deserialize::deserialize(file, &[]));
+        let hash: BitcoinHash = try!(Deserialize::deserialize(file, &[]));
+        let block: BlockMessage = try!(Deserialize::deserialize(file, &[]));
+        // let data: BlockMetadata = try!(Deserialize::deserialize(file, &[]));
+        // file.seek(SeekFrom::Current((length - 80) as i64)).unwrap();
 
-        Ok((length, hash, data))
+        Ok((length, hash, block.metadata))
     }
 
     pub fn new(disk_store_: File) -> BlockBlobStore {
@@ -81,7 +79,6 @@ impl BlockBlobStore {
                     store.insert(hash, (block_header, pos as usize));
                 },
                 Err(x) => {
-                    println!("Error: {:?}", x);
                     break;
                 }
             }
@@ -98,25 +95,25 @@ impl BlockBlobStore {
 
 pub struct BlockStore {
     store: BlockBlobStore,
-    height_store_rev: HashMap<[u8; 32], usize>,
-    height_store: Vec<[u8; 32]>,
-    highest_block: [u8; 32],
+    height_store_rev: HashMap<BitcoinHash, usize>,
+    height_store: Vec<BitcoinHash>,
+    highest_block: BitcoinHash,
 }
 
 impl BlockStore {
-    pub fn has(&self, hash: &[u8; 32]) -> bool { self.store.has(hash) }
+    pub fn has(&self, hash: &BitcoinHash) -> bool { self.store.has(hash) }
 
-    pub fn get_metadata(&self, hash: &[u8; 32]) -> Option<&BlockMetadata> {
+    pub fn get_metadata(&self, hash: &BitcoinHash) -> Option<&BlockMetadata> {
         self.store.get(hash)
     }
 
-    pub fn get_height(&self, hash: &[u8; 32]) -> Option<usize> {
+    pub fn get_height(&self, hash: &BitcoinHash) -> Option<usize> {
         self.height_store_rev.get(hash).cloned()
     }
 
     pub fn height(&self) -> usize { self.height_store_rev[&self.highest_block] }
 
-    pub fn insert(&mut self, block: BlockMessage, hash: &[u8; 32], data: &[u8]) {
+    pub fn insert(&mut self, block: BlockMessage, hash: &BitcoinHash, data: &[u8]) {
         self.store.insert(block, hash, data);
 
         self.highest_block =
@@ -132,7 +129,7 @@ impl BlockStore {
         }
     }
 
-    pub fn block_locators(&self) -> Vec<[u8; 32]> {
+    pub fn block_locators(&self) -> Vec<BitcoinHash> {
         let height = self.height();
         let mut index = 0;
         let mut locator = vec![];
@@ -155,11 +152,11 @@ impl BlockStore {
     // Unfortunately we cannot borrow self as mutable (for height_store_rev) and as immutable (for
     // store) so this function cannot be non-static until rust supports partial borrows. Maybe
     // double check if there are other possibilities.
-    fn insert_chain(hash: &[u8; 32],
+    fn insert_chain(hash: &BitcoinHash,
                     store: &BlockBlobStore,
-                    height_store_rev: &mut HashMap<[u8; 32], usize>,
-                    height_store: &mut Vec<[u8; 32]>,
-                    highest_block: [u8; 32]) -> [u8; 32] {
+                    height_store_rev: &mut HashMap<BitcoinHash, usize>,
+                    height_store: &mut Vec<BitcoinHash>,
+                    highest_block: BitcoinHash) -> BitcoinHash {
         let height = height_store_rev[&highest_block];
         let mut new_height = 0;
         let mut chain = vec![];
@@ -194,8 +191,7 @@ impl BlockStore {
                 new_height += 1;
                 new_highest_block = **el;
 
-                print!("New height: {:?}. ", new_height);
-                Debug::print_bytes(&new_highest_block);
+                println!("New height: {:?}. {:?}", new_height, new_highest_block);
 
                 height_store_rev.insert(new_highest_block, new_height);
                 if new_height >= height_store.len() {
@@ -214,7 +210,7 @@ impl BlockStore {
     }
 
     pub fn new(disk_store: File, network_type: NetworkType) -> BlockStore {
-        let genesis = match network_type {
+        let genesis = BitcoinHash::new(match network_type {
             NetworkType::TestNet3 =>
                 [0x06, 0x12, 0x8E, 0x87, 0xBE, 0x8B, 0x1B, 0x4D,
                  0xEA, 0x47, 0xA7, 0x24, 0x7D, 0x55, 0x28, 0xD2,
@@ -228,7 +224,7 @@ impl BlockStore {
             NetworkType::TestNet =>  unimplemented!(),
             NetworkType::NameCoin => unimplemented!(),
             NetworkType::Unknown =>  unreachable!(),
-        };
+        });
 
         let mut store = BlockStore {
             store: BlockBlobStore::new(disk_store),
