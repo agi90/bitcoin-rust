@@ -4,12 +4,24 @@ use crypto::sha2;
 use crypto::ripemd160;
 
 use std::env;
+use std::fs::{File, OpenOptions};
 
 pub struct Config {
     pub port: u16,
+    pub blocks_file: File,
 }
 
 impl Config {
+    fn get_store(filename: &str) -> Result<File, String> {
+        OpenOptions::new()
+            .read(true)
+            .write(true)
+            .append(true)
+            .create(true)
+            .open(filename)
+            .map_err(|e| format!("Error: {:?}", e))
+    }
+
     pub fn from_command_line() -> Result<Config, String> {
         let mut args = env::args();
 
@@ -18,6 +30,7 @@ impl Config {
 
         let mut config = Config {
             port: 18333,
+            blocks_file: try!(Self::get_store("block.dat")),
         };
 
         loop {
@@ -25,8 +38,11 @@ impl Config {
                 Some(arg) => {
                     let next = args.next();
                     match arg.as_ref() {
-                        "-p" | "--port" => config.port = try!(Self::parse_port(next)),
-                        _               => try!(Self::parse_error(arg)),
+                        "-p" | "--port" =>
+                            config.port = try!(Self::parse_port(next)),
+                        "-f" | "--block-file" =>
+                            config.blocks_file = try!(Self::parse_block_file(next)),
+                        _ => try!(Self::parse_error(arg)),
                     }
                 }
                 None => break,
@@ -34,6 +50,13 @@ impl Config {
         }
 
         Ok(config)
+    }
+
+    fn parse_block_file(arg: Option<String>) -> Result<File, String> {
+        match arg {
+            Some(ref path) => Self::get_store(path),
+            None => Err(format!("Missing port.")),
+        }
     }
 
     fn parse_port(arg: Option<String>) -> Result<u16, String> {

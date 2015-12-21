@@ -19,5 +19,5 @@ pub fn main() {
     let config = Config::from_command_line().unwrap_or_else(
         |e| { println!("Error: {}", e); panic!() });
 
-    net::p2pclient::start(format!("0.0.0.0:{}", config.port).parse().unwrap());
+    net::p2pclient::start(format!("0.0.0.0:{}", config.port).parse().unwrap(), config.blocks_file);
 }

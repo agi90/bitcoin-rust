@@ -17,8 +17,8 @@ use super::IPAddress;
 use time;
 use time::Duration;
 
-use std::io::{Read, Cursor};
-use std::fs::{File, OpenOptions};
+use std::io::Cursor;
+use std::fs::File;
 use std::net::ToSocketAddrs;
 use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard, Arc};
@@ -63,11 +63,11 @@ struct Peer {
 }
 
 impl State {
-    pub fn new(network_type: NetworkType) -> State {
+    pub fn new(network_type: NetworkType, blocks_file: File) -> State {
         State {
             peers: HashMap::new(),
             tx_store: HashMap::new(),
-            block_store: BlockStore::new(Self::get_store("block.dat"), network_type),
+            block_store: BlockStore::new(blocks_file, network_type),
             pending_inv: ExpiringCache::new(Duration::minutes(2), Duration::seconds(10)),
         }
     }
@@ -82,17 +82,6 @@ impl State {
     }
 
     pub fn pending_inv_len(&self) -> usize { self.pending_inv.len() }
-
-    fn get_store(filename: &str) -> File {
-        OpenOptions::new()
-            .read(true)
-            .write(true)
-            .append(true)
-            .create(true)
-            .open(filename)
-            // TODO: handle errors
-            .unwrap()
-    }
 
     pub fn height(&self) -> usize { self.block_store.height() }
 
@@ -547,13 +536,13 @@ impl rpcengine::MessageHandler for BitcoinClient {
     }
 }
 
-pub fn start(address: SocketAddr) {
+pub fn start(address: SocketAddr, blocks_file: File) {
     let server = tcp::TcpListener::bind(&address).unwrap();
     let mut event_loop = mio::EventLoop::new().unwrap();
     event_loop.register(&server, rpcengine::SERVER, mio::EventSet::readable(),
                         mio::PollOpt::edge()).unwrap();
 
-    let state = Arc::new(Mutex::new(State::new(NetworkType::TestNet3)));
+    let state = Arc::new(Mutex::new(State::new(NetworkType::TestNet3, blocks_file)));
 
     let client = BitcoinClient::new(state.clone(), event_loop.channel(), NetworkType::TestNet3);
 

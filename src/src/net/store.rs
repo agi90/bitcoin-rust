@@ -56,13 +56,21 @@ impl BlockBlobStore {
 
     fn get_next_object(file: &mut File) ->
         Result<(u64, BitcoinHash, BlockMetadata), String> {
+        let pos = file.seek(SeekFrom::Current(0)).unwrap();
         let length: u64 = try!(Deserialize::deserialize(file));
         let hash: BitcoinHash = try!(Deserialize::deserialize(file));
-        let block: BlockMessage = try!(Deserialize::deserialize(file));
-        // let data: BlockMetadata = try!(Deserialize::deserialize(file));
-        // file.seek(SeekFrom::Current((length - 80) as i64)).unwrap();
+        let data: BlockMetadata = try!(Deserialize::deserialize(file));
 
-        Ok((length, hash, block.metadata))
+        match file.seek(SeekFrom::Current((length - 80) as i64)) {
+            Ok(_) => {},
+            Err(_) => {
+                // Let's truncate the file, the client probably crashed mid-writing
+                println!("Truncating to {}", pos);
+                file.set_len(pos).unwrap();
+            }
+        }
+
+        Ok((length, hash, data))
     }
 
     pub fn new(disk_store_: File) -> BlockBlobStore {
@@ -74,7 +82,7 @@ impl BlockBlobStore {
             let next = Self::get_next_object(&mut disk_store);
             match next {
                 Ok((_, hash, block_header)) => {
-                    // assert_eq!(data.hash(), hash);
+                    println!("reading pos={}", pos);
                     store.insert(hash, (block_header, pos as usize));
                 },
                 Err(_) => {
