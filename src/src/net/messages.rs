@@ -823,7 +823,7 @@ message!(AddrMessage;
 );
 
 message!(RejectMessage;
-    message: String,
+    message: Command,
     ccode: u8,
     reason: String
 );

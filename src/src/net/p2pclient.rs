@@ -29,6 +29,8 @@ use mio::Sender;
 
 use super::store::BlockStore;
 
+use utils::Debug;
+
 struct BitcoinClient {
     version: i32,
     services: Services,
@@ -97,10 +99,12 @@ impl State {
 
         match version {
             Some(ver) => {
+                println!("add_peer token={:?} type={:?}", token, ConnectionType::Inbound);
                 self.peers.insert(token, Peer::new_inbound(ver));
                 ConnectionType::Inbound
             }
             None => {
+                println!("add_peer token={:?} type={:?}", token, ConnectionType::Outbound);
                 self.peers.insert(token, Peer::new_outbound());
                 ConnectionType::Outbound
             }
@@ -210,7 +214,7 @@ impl BitcoinClient {
             network_type: network_type,
         };
 
-        client.channel.send(Message::Connect("127.0.0.1:18333".parse().unwrap())).unwrap();
+        // client.channel.send(Message::Connect("127.0.0.1:18333".parse().unwrap())).unwrap();
         client
     }
 
@@ -292,6 +296,7 @@ impl BitcoinClient {
         if connection_type == ConnectionType::Inbound {
             self.send_message(Command::Version, token, Some(Box::new(version)));
         }
+
         self.send_message(Command::Verack, token, None);
     }
 
@@ -346,14 +351,25 @@ impl BitcoinClient {
     fn send_inv(&self, start_hash: &BitcoinHash, token: mio::Token) {
         let state = self.state.lock().unwrap();
         let mut cur_hash = start_hash.clone();
-        let mut cur = state.get_block_metadata(&cur_hash).unwrap();
+        let mut cur = match state.get_block_metadata(&cur_hash) {
+            Some(block) => block,
+            None        => {
+                let reject =
+                    RejectMessage::new(Command::GetBlocks, 0,
+                                       "GetBlocks doesn't start with genesis block.".to_string());
+                self.send_message(Command::Reject, token, Some(Box::new(reject)));
+                return;
+            },
+        };
+
         let mut inv = vec![];
 
         for _ in 0..500 {
             inv.push(InventoryVector::new(InventoryVectorType::MSG_BLOCK,
                                           cur_hash));
             cur_hash = cur.prev_block;
-            cur = state.get_block_metadata(&cur_hash).unwrap();
+            cur = state.get_block_metadata(&cur_hash)
+                .expect(&format!("Could not find metadata for {:?}", cur_hash));
         }
 
         self.send_message(Command::Inv, token, Some(Box::new(InvMessage::new(inv))));
@@ -424,8 +440,8 @@ impl BitcoinClient {
         self.lock_state().get_peer(&token).map(|p| p.got_pong(message.nonce));
     }
 
-    fn handle_reject(&self, message: RejectMessage, _: mio::Token) {
-        println!("Message = {:?}", message);
+    fn handle_reject(&self, message: RejectMessage, token: mio::Token) {
+        println!("Message from {:?} = {:?}", token, message);
         println!("harakiri :-(");
         panic!();
     }
@@ -482,7 +498,10 @@ impl BitcoinClient {
             },
             Command::Block => {
                 let message = try!(BlockMessage::deserialize(message_bytes));
-                assert_eq!(message_bytes.get_ref().len() as u64, message_bytes.position());
+                if message_bytes.get_ref().len() as u64 != message_bytes.position() {
+                    Debug::print_bytes(message_bytes.get_ref());
+                    panic!();
+                }
                 self.handle_block(message, token, message_bytes);
             },
             Command::GetBlocks => {
