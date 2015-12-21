@@ -42,6 +42,7 @@ pub enum Command {
     GetBlocks,
     Headers,
     Block,
+    FilterLoad,
     Unknown,
 }
 
@@ -657,6 +658,7 @@ impl Deserialize for Command {
             b"getdata\0\0\0\0\0"      => Ok(Command::GetData),
             b"headers\0\0\0\0\0"      => Ok(Command::Headers),
             b"block\0\0\0\0\0\0\0"    => Ok(Command::Block),
+            b"filterload\0\0"         => Ok(Command::Block),
             command                   => {
                 println!("Warning: unknown command `{:?}`", str::from_utf8(command));
                 Ok(Command::Unknown)
@@ -683,6 +685,7 @@ impl Serialize for Command {
             &Command::Block       => b"block\0\0\0\0\0\0\0",
             &Command::GetBlocks   => b"getblocks\0\0\0",
             &Command::Headers     => b"headers\0\0\0\0\0",
+            &Command::FilterLoad  => b"filterload\0\0",
             &Command::Unknown     => unimplemented!(),
         };
 
@@ -784,6 +787,13 @@ macro_rules! message {
         }
     }
 }
+
+message!(FilterLoadMessage;
+    filter: Vec<u8>,
+    n_hash_funcs: u32,
+    n_tweak: u32,
+    n_flags: u8
+);
 
 message!(MessageHeader;
     network_type: NetworkType,

@@ -210,6 +210,7 @@ impl BitcoinClient {
             network_type: network_type,
         };
 
+        client.channel.send(Message::Connect("127.0.0.1:18333".parse().unwrap())).unwrap();
         client
     }
 
@@ -358,6 +359,11 @@ impl BitcoinClient {
         self.send_message(Command::Inv, token, Some(Box::new(InvMessage::new(inv))));
     }
 
+    fn handle_filterload(&self, message: FilterLoadMessage, _: mio::Token) {
+        // TODO: actually do something
+        println!("Filterload {:?}", message);
+    }
+
     fn handle_getheaders(&self, _: GetHeadersMessage, token: mio::Token) {
         // TODO: actually do something
         let response = HeadersMessage::new(vec![]);
@@ -486,6 +492,10 @@ impl BitcoinClient {
             Command::GetHeaders => {
                 let message = try!(GetHeadersMessage::deserialize(message_bytes));
                 self.handle_getheaders(message, token);
+            },
+            Command::FilterLoad => {
+                let message = try!(FilterLoadMessage::deserialize(message_bytes));
+                self.handle_filterload(message, token);
             },
             Command::Headers => {
                 let message = try!(HeadersMessage::deserialize(message_bytes));
