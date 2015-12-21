@@ -607,7 +607,8 @@ impl Hash for BitcoinHash {
 impl fmt::Debug for BitcoinHash {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         for i in 0..32 {
-            let result = write!(f, "{:02X}", self[i]);
+            // Let's print the hash in the canonical form (i.e. big endian)
+            let result = write!(f, "{:02X}", self[31 - i]);
             if result.is_err() {
                 return result;
             }

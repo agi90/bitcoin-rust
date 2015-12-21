@@ -73,7 +73,7 @@ impl State {
     }
 
     pub fn add_inv(&mut self, hash: BitcoinHash) {
-        print!("inv for {:?}", hash);
+        println!("inv for {:?}", hash);
         self.pending_inv.insert(hash);
     }
 
