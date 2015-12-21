@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::fs::File;
+use std::io::Write;
 
 use super::messages::{BlockMetadata, NetworkType, BlockMessage, Serialize,
                       Deserialize, BitcoinHash};
@@ -43,8 +44,8 @@ impl BlockBlobStore {
         if self.store.get(hash).is_none() {
             // Let's save the length and hash to double check data on disk
             (data.len() as u64).serialize(&mut self.disk_store);
-            hash.serialize(&mut self.disk_store);
-            data.serialize(&mut self.disk_store);
+            self.disk_store.write_all(hash.inner()).unwrap();
+            self.disk_store.write_all(data).unwrap();
 
             self.store.insert(hash.clone(), (block.into_metadata(), self.last_index));
 

@@ -588,6 +588,10 @@ impl BitcoinHash {
             data: data,
         }
     }
+
+    pub fn inner(&self) -> &[u8; 32] {
+        &self.data
+    }
 }
 
 impl Deref for BitcoinHash {
