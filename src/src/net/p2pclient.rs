@@ -338,7 +338,8 @@ impl BitcoinClient {
         let hash = message.hash();
         let mut state = self.state.lock().unwrap();
         state.received_data(&hash);
-        state.add_block(message, &hash, data.get_ref());
+        // We need to skip the header
+        state.add_block(message, &hash, &data.get_ref()[24..]);
 
         self.get_blocks(&mut state, token);
     }
