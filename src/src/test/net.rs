@@ -26,7 +26,9 @@ fn test_version_message() {
              0x0F, 0x2F, 0x53, 0x61, 0x74, 0x6F, 0x73, 0x68, 0x69, 0x3A,
              0x30, 0x2E, 0x37, 0x2E, 0x32, 0x2F,
              // last block id
-             0xC0, 0x3E, 0x03, 0x00];
+             0xC0, 0x3E, 0x03, 0x00,
+             // relay
+             0x00];
 
     let mut deserializer = Cursor::new(&buffer[..]);
     let message = VersionMessage::deserialize(&mut deserializer).unwrap();
@@ -55,9 +57,9 @@ fn test_complete_message() {
          0x76, 0x65, 0x72, 0x73, 0x69, 0x6F, 0x6E, 0x00, 0x00, 0x00,
          0x00, 0x00,
          // message length
-         0x64, 0x00, 0x00, 0x00,
+         0x65, 0x00, 0x00, 0x00,
          // checksum
-         0x3B, 0x64, 0x8D, 0x5A,
+         0x03, 0x0E, 0xCC, 0x57,
 
          // version
          0x62, 0xEA, 0x00, 0x00,
@@ -79,18 +81,21 @@ fn test_complete_message() {
          0x0F, 0x2F, 0x53, 0x61, 0x74, 0x6F, 0x73, 0x68, 0x69, 0x3A,
          0x30, 0x2E, 0x37, 0x2E, 0x32, 0x2F,
          // last block height
-         0xC0, 0x3E, 0x03, 0x00];
+         0xC0, 0x3E, 0x03, 0x00,
+         // relay
+         0x00];
 
     let mut deserializer = Cursor::new(&buffer[..]);
     let header  = MessageHeader::deserialize(&mut deserializer).unwrap();
     assert_eq!(header.network_type, NetworkType::Main);
     assert_eq!(header.command, Command::Version);
-    assert_eq!(header.length, 100);
+    assert_eq!(header.length, 101);
 
     let message = VersionMessage::deserialize(&mut deserializer).unwrap();
 
     let serialized = get_serialized_message(NetworkType::Main, Command::Version, Some(Box::new(message)));
     Debug::print_bytes(&serialized);
+    Debug::print_bytes(&buffer);
 
     assert_eq!(buffer, serialized);
 }

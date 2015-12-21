@@ -269,7 +269,7 @@ impl BitcoinClient {
     }
 
     fn ping(&self, state: &mut StateMutex, token: mio::Token) {
-        let message = PingMessage::new();
+        let message = PingMessage::new(rand::random());
         state.get_peer(&token).unwrap().sent_ping(message.nonce);
         self.send_message(Command::Ping, token, Some(Box::new(message)));
     }
@@ -443,73 +443,73 @@ impl BitcoinClient {
     fn handle_command(&self, header: MessageHeader, token: mio::Token,
                       message_bytes: &mut Cursor<&[u8]>) -> Result<(), String> {
 
-        if *header.magic() != self.network_type {
+        if header.network_type != self.network_type {
             // This packet is not for the right version :O
-            return Err(format!("Received packet for wrong version: {:?}", header.magic()));
+            return Err(format!("Received packet for wrong version: {:?}", header.network_type));
         }
 
-        match header.command() {
-            &Command::Tx => {
+        match header.command {
+            Command::Tx => {
                 let message = try!(TxMessage::deserialize(message_bytes));
                 self.handle_tx(message, token);
             },
-            &Command::GetData => {
+            Command::GetData => {
                 let message = try!(InvMessage::deserialize(message_bytes));
                 self.handle_getdata(message, token);
             },
-            &Command::NotFound => {
+            Command::NotFound => {
                 let message = try!(InvMessage::deserialize(message_bytes));
                 self.handle_notfound(message, token);
             },
-            &Command::Inv => {
+            Command::Inv => {
                 let message = try!(InvMessage::deserialize(message_bytes));
                 self.handle_inv(message, token);
             },
-            &Command::Pong => {
+            Command::Pong => {
                 // Ping and Pong message use the same format
                 let message = try!(PingMessage::deserialize(message_bytes));
                 self.handle_pong(message, token);
             },
-            &Command::Ping => {
+            Command::Ping => {
                 let message = try!(PingMessage::deserialize(message_bytes));
                 self.handle_ping(message, token);
             },
-            &Command::Version => {
+            Command::Version => {
                 let message = try!(VersionMessage::deserialize(message_bytes));
                 self.handle_version(message, token);
             },
-            &Command::Verack => {
+            Command::Verack => {
                 self.handle_verack(token);
             },
-            &Command::GetAddr => {
+            Command::GetAddr => {
                 self.handle_getaddr(token);
             },
-            &Command::Block => {
+            Command::Block => {
                 let message = try!(BlockMessage::deserialize(message_bytes));
                 assert_eq!(message_bytes.get_ref().len() as u64, message_bytes.position());
                 self.handle_block(message, token, message_bytes);
             },
-            &Command::GetBlocks => {
+            Command::GetBlocks => {
                 let message = try!(GetHeadersMessage::deserialize(message_bytes));
                 self.handle_getblocks(message, token);
             },
-            &Command::GetHeaders => {
+            Command::GetHeaders => {
                 let message = try!(GetHeadersMessage::deserialize(message_bytes));
                 self.handle_getheaders(message, token);
             },
-            &Command::Headers => {
+            Command::Headers => {
                 let message = try!(HeadersMessage::deserialize(message_bytes));
                 self.handle_headers(message, token);
             },
-            &Command::Addr => {
+            Command::Addr => {
                 let message = try!(AddrMessage::deserialize(message_bytes));
                 self.handle_addr(message, token);
             },
-            &Command::Reject => {
+            Command::Reject => {
                 let message = try!(RejectMessage::deserialize(message_bytes));
                 self.handle_reject(message, token);
             },
-            &Command::Unknown => {
+            Command::Unknown => {
                 return Err(format!("Unknown message. {:?}", message_bytes));
             },
         };

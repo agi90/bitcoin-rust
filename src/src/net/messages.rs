@@ -716,235 +716,8 @@ impl Serialize for NetworkType {
     }
 }
 
-#[derive(PartialEq, Debug)]
-pub struct MessageHeader {
-    pub network_type: NetworkType,
-    pub command: Command,
-    pub length: u32,
-    pub checksum: [u8; 4],
-}
-
-impl MessageHeader {
-    pub fn len(&self) -> u32 { self.length }
-    pub fn magic(&self) -> &NetworkType { &self.network_type }
-    pub fn command(&self) -> &Command { &self.command }
-}
-
-impl Serialize for MessageHeader {
-    fn serialize(&self, serializer: &mut Serializer) {
-        self.network_type.serialize(serializer);
-        self.     command.serialize(serializer);
-        self.      length.serialize(serializer);
-        self.    checksum.serialize(serializer);
-    }
-}
-
-impl Deserialize for MessageHeader {
-    fn deserialize(deserializer: &mut Deserializer) -> Result<Self, String> {
-        Ok(MessageHeader {
-            network_type: try!(Deserialize::deserialize(deserializer)),
-            command:      try!(Deserialize::deserialize(deserializer)),
-            length:       try!(Deserialize::deserialize(deserializer)),
-            checksum:     try!(Deserialize::deserialize(deserializer)),
-        })
-    }
-}
-
-#[derive(Debug, PartialEq)]
-pub struct VersionMessage {
-    pub version: i32,
-    pub services: Services,
-    pub timestamp: time::Tm,
-    pub addr_recv: IPAddress,
-    pub addr_from: IPAddress,
-    pub nonce: u64,
-    pub user_agent: String,
-    pub start_height: i32,
-    pub relay: bool,
-}
-
-impl Serialize for VersionMessage {
-    fn serialize(&self, serializer: &mut Serializer) {
-        self.     version.serialize(serializer);
-        self.    services.serialize(serializer);
-        self.   timestamp.serialize(serializer);
-        self.   addr_recv.serialize(serializer);
-        self.   addr_from.serialize(serializer);
-        self.       nonce.serialize(serializer);
-        self.  user_agent.serialize(serializer);
-        self.start_height.serialize(serializer);
-
-        if self.version > 70001 {
-            self.relay.serialize(serializer);
-        }
-    }
-}
-
-impl Deserialize for VersionMessage {
-    fn deserialize(deserializer: &mut Deserializer) -> Result<Self, String> {
-        let version =      try!(Deserialize::deserialize(deserializer));
-        let services =     try!(Deserialize::deserialize(deserializer));
-        let timestamp =    try!(Deserialize::deserialize(deserializer));
-        let addr_recv =    try!(Deserialize::deserialize(deserializer));
-        let addr_from =    try!(Deserialize::deserialize(deserializer));
-        let nonce =        try!(Deserialize::deserialize(deserializer));
-        let user_agent =   try!(Deserialize::deserialize(deserializer));
-        let start_height = try!(Deserialize::deserialize(deserializer));
-
-        let relay = if version > 70001 {
-            try!(bool::deserialize(deserializer))
-        } else {
-            false
-        };
-
-        Ok(VersionMessage {
-            version: version,
-            services: services,
-            timestamp: timestamp,
-            addr_recv: addr_recv,
-            addr_from: addr_from,
-            nonce: nonce,
-            user_agent: user_agent,
-            start_height: start_height,
-            relay: relay,
-        })
-    }
-}
-
-#[derive(Debug)]
-pub struct PingMessage {
-    pub nonce: u64,
-}
-
-impl Serialize for PingMessage {
-    fn serialize(&self, serializer: &mut Serializer) {
-        self.nonce.serialize(serializer);
-    }
-}
-
-impl Deserialize for PingMessage {
-    fn deserialize(deserializer: &mut Deserializer) -> Result<Self, String> {
-        Ok(PingMessage {
-            nonce: try!(u64::deserialize(deserializer)),
-        })
-    }
-}
-
-impl PingMessage {
-    pub fn nonce(&self) -> u64 { self.nonce }
-    pub fn new() -> PingMessage {
-        PingMessage {
-            nonce: rand::random(),
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct AddrMessage {
-    pub addr_list: Vec<(ShortFormatTm, IPAddress)>,
-}
-
-impl Serialize for AddrMessage {
-    fn serialize(&self, serializer: &mut Serializer) {
-        self.addr_list.serialize(serializer);
-    }
-}
-
-impl Deserialize for AddrMessage {
-    fn deserialize(deserializer: &mut Deserializer) -> Result<Self, String> {
-        Ok(AddrMessage {
-            addr_list: try!(Deserialize::deserialize(deserializer)),
-        })
-    }
-}
-
-impl AddrMessage {
-    pub fn new(addr_list: Vec<(ShortFormatTm, IPAddress)>) -> AddrMessage {
-        AddrMessage {
-            addr_list: addr_list,
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct RejectMessage {
-    message: String,
-    ccode: u8,
-    reason: String,
-}
-
-impl Serialize for RejectMessage {
-    fn serialize(&self, serializer: &mut Serializer) {
-        self.message.serialize(serializer);
-        self  .ccode.serialize(serializer);
-        self .reason.serialize(serializer);
-    }
-}
-
-impl Deserialize for RejectMessage {
-    fn deserialize(deserializer: &mut Deserializer) -> Result<Self, String> {
-        Ok(RejectMessage {
-            message: try!(Deserialize::deserialize(deserializer)),
-            ccode:   try!(Deserialize::deserialize(deserializer)),
-            reason:  try!(Deserialize::deserialize(deserializer)),
-        })
-    }
-}
-
-#[derive(Debug)]
-pub struct HeadersMessage {
-    pub headers: Vec<(BlockMetadata, u64)>,
-}
-
-impl HeadersMessage {
-    pub fn new(headers: Vec<(BlockMetadata, u64)>) -> HeadersMessage {
-        HeadersMessage {
-            headers: headers,
-        }
-    }
-}
-
-impl Serialize for HeadersMessage {
-    fn serialize(&self, serializer: &mut Serializer) {
-        self.headers.serialize(serializer);
-    }
-}
-
-impl Deserialize for HeadersMessage {
-    fn deserialize(deserializer: &mut Deserializer) -> Result<Self, String> {
-        Ok(HeadersMessage {
-            headers: try!(Deserialize::deserialize(deserializer)),
-        })
-    }
-}
-
-#[derive(Debug)]
-pub struct GetHeadersMessage {
-    pub version: u32,
-    pub block_locators: Vec<BitcoinHash>,
-    pub hash_stop: BitcoinHash,
-}
-
-impl Serialize for GetHeadersMessage {
-    fn serialize(&self, serializer: &mut Serializer) {
-        self.       version.serialize(serializer);
-        self.block_locators.serialize(serializer);
-        self.     hash_stop.serialize(serializer);
-    }
-}
-
-impl Deserialize for GetHeadersMessage {
-    fn deserialize(deserializer: &mut Deserializer) -> Result<Self, String> {
-        Ok(GetHeadersMessage {
-            version:        try!(Deserialize::deserialize(deserializer)),
-            block_locators: try!(Deserialize::deserialize(deserializer)),
-            hash_stop:      try!(Deserialize::deserialize(deserializer)),
-        })
-    }
-}
-
 #[allow(non_camel_case_types)]
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum InventoryVectorType {
     ERROR,
     MSG_TX,
@@ -979,201 +752,119 @@ impl Deserialize for InventoryVectorType {
     }
 }
 
-#[derive(Debug)]
-pub struct InventoryVector {
-    pub type_: InventoryVectorType,
-    pub hash: BitcoinHash,
-}
+macro_rules! message {
+    ($name:ident ; $($element: ident: $ty: ty),*) => {
+        #[derive(Debug, PartialEq)]
+        pub struct $name { $(pub $element: $ty),* }
 
-impl Serialize for InventoryVector {
-    fn serialize(&self, serializer: &mut Serializer) {
-        self.type_.serialize(serializer);
-        self.hash .serialize(serializer);
-    }
-}
+        impl $name {
+            pub fn new($($element: $ty),*) -> $name {
+                $name {
+                    $($element: $element),*
+                }
+            }
+        }
 
-impl Deserialize for InventoryVector {
-    fn deserialize(deserializer: &mut Deserializer) -> Result<Self, String> {
-        Ok(InventoryVector {
-            type_: try!(Deserialize::deserialize(deserializer)),
-            hash:  try!(Deserialize::deserialize(deserializer)),
-        })
-    }
-}
+        impl Serialize for $name {
+            fn serialize(&self, serializer: &mut Serializer) {
+                $(self.$element.serialize(serializer));*
+            }
+        }
 
-impl InventoryVector {
-    pub fn new(type_: InventoryVectorType, hash: BitcoinHash) -> InventoryVector {
-        InventoryVector {
-            type_: type_,
-            hash: hash,
+        impl Deserialize for $name {
+            fn deserialize(deserializer: &mut Deserializer) -> Result<Self, String> {
+                Ok($name {
+                    $($element: try!(Deserialize::deserialize(deserializer))),*
+                })
+            }
         }
     }
 }
 
-type Inventory = Vec<InventoryVector>;
+message!(MessageHeader;
+    network_type: NetworkType,
+    command: Command,
+    length: u32,
+    checksum: [u8; 4]
+);
 
-#[derive(Debug)]
-pub struct InvMessage {
-    pub inventory: Vec<InventoryVector>,
-}
+message!(VersionMessage;
+    version: i32,
+    services: Services,
+    timestamp: time::Tm,
+    addr_recv: IPAddress,
+    addr_from: IPAddress,
+    nonce: u64,
+    user_agent: String,
+    start_height: i32,
+    relay: bool
+);
 
-impl Serialize for InvMessage {
-    fn serialize(&self, serializer: &mut Serializer) {
-        self.inventory.serialize(serializer);
-    }
-}
+message!(PingMessage;
+    nonce: u64
+);
 
-impl Deserialize for InvMessage {
-    fn deserialize(deserializer: &mut Deserializer) -> Result<Self, String> {
-        Ok(InvMessage {
-            inventory: try!(Inventory::deserialize(deserializer)),
-        })
-    }
-}
+message!(AddrMessage;
+    addr_list: Vec<(ShortFormatTm, IPAddress)>
+);
 
-impl InvMessage {
-    pub fn new(inventory: Vec<InventoryVector>) -> InvMessage {
-        InvMessage {
-            inventory: inventory,
-        }
-    }
-}
+message!(RejectMessage;
+    message: String,
+    ccode: u8,
+    reason: String
+);
 
-#[derive(Debug)]
-pub struct OutPoint {
+message!(HeadersMessage;
+    headers: Vec<(BlockMetadata, u64)>
+);
+
+message!(GetHeadersMessage;
+    version: u32,
+    block_locators: Vec<BitcoinHash>,
+    hash_stop: BitcoinHash
+);
+
+message!(InventoryVector;
+    type_: InventoryVectorType,
+    hash: BitcoinHash
+);
+
+message!(InvMessage;
+    inventory: Vec<InventoryVector>
+);
+
+message!(OutPoint;
     hash: BitcoinHash,
-    index: u32,
-}
+    index: u32
+);
 
-impl Serialize for OutPoint {
-    fn serialize(&self, serializer: &mut Serializer) {
-        self.hash .serialize(serializer);
-        self.index.serialize(serializer);
-    }
-}
-
-impl Deserialize for OutPoint {
-    fn deserialize(deserializer: &mut Deserializer) -> Result<Self, String> {
-        Ok(OutPoint {
-            hash:  try!(BitcoinHash::deserialize(deserializer)),
-            index: try!( u32::deserialize(deserializer)),
-        })
-    }
-}
-
-#[derive(Debug)]
-pub struct TxIn {
+message!(TxIn;
     previous_output: OutPoint,
     script: Vec<u8>,
-    sequence: u32,
-}
+    sequence: u32
+);
 
-impl Serialize for TxIn {
-    fn serialize(&self, serializer: &mut Serializer) {
-        self.previous_output.serialize(serializer);
-        self.script         .serialize(serializer);
-        self.sequence       .serialize(serializer);
-    }
-}
-
-impl Deserialize for TxIn {
-    fn deserialize(deserializer: &mut Deserializer) -> Result<Self, String> {
-        Ok(TxIn {
-            previous_output: try!(Deserialize::deserialize(deserializer)),
-            script:          try!(Deserialize::deserialize(deserializer)),
-            sequence:        try!(Deserialize::deserialize(deserializer)),
-        })
-    }
-}
-
-#[derive(Debug)]
-pub struct TxOut {
+message!(TxOut;
     value: i64,
-    pk_script: Vec<u8>,
-}
+    pk_script: Vec<u8>
+);
 
-impl Serialize for TxOut {
-    fn serialize(&self, serializer: &mut Serializer) {
-        self.value    .serialize(serializer);
-        self.pk_script.serialize(serializer);
-    }
-}
-
-impl Deserialize for TxOut {
-    fn deserialize(deserializer: &mut Deserializer) -> Result<Self, String> {
-        let value: i64 = try!(Deserialize::deserialize(deserializer));
-        assert!(value >= 0);
-
-        Ok(TxOut {
-            value: value,
-            pk_script: try!(Deserialize::deserialize(deserializer)),
-        })
-    }
-}
-
-#[derive(Debug)]
-pub struct TxMessage {
+message!(TxMessage;
     version: u32,
     tx_in: Vec<TxIn>,
     tx_out: Vec<TxOut>,
-    lock_time: u32,
-}
+    lock_time: u32
+);
 
-impl Serialize for TxMessage {
-    fn serialize(&self, serializer: &mut Serializer) {
-        self.version  .serialize(serializer);
-        self.tx_in    .serialize(serializer);
-        self.tx_out   .serialize(serializer);
-        self.lock_time.serialize(serializer);
-    }
-}
-
-impl Deserialize for TxMessage {
-    fn deserialize(deserializer: &mut Deserializer) -> Result<Self, String> {
-        Ok(TxMessage {
-            version:   try!(Deserialize::deserialize(deserializer)),
-            tx_in:     try!(Deserialize::deserialize(deserializer)),
-            tx_out:    try!(Deserialize::deserialize(deserializer)),
-            lock_time: try!(Deserialize::deserialize(deserializer)),
-        })
-    }
-}
-
-#[derive(Debug)]
-pub struct BlockMetadata {
+message!(BlockMetadata;
     version: i32,
-    pub prev_block: BitcoinHash,
+    prev_block: BitcoinHash,
     merkle_root: BitcoinHash,
     timestamp: ShortFormatTm,
     bits: u32,
-    nonce: u32,
-}
+    nonce: u32
+);
 
-impl Serialize for BlockMetadata {
-    fn serialize(&self, serializer: &mut Serializer) {
-        self.version    .serialize(serializer);
-        self.prev_block .serialize(serializer);
-        self.merkle_root.serialize(serializer);
-        self.timestamp  .serialize(serializer);
-        self.bits       .serialize(serializer);
-        self.nonce      .serialize(serializer);
-    }
-}
-
-impl Deserialize for BlockMetadata {
-    fn deserialize(deserializer: &mut Deserializer) -> Result<Self, String> {
-        Ok(BlockMetadata {
-            version:     try!(Deserialize::deserialize(deserializer)),
-            prev_block:  try!(Deserialize::deserialize(deserializer)),
-            merkle_root: try!(Deserialize::deserialize(deserializer)),
-            timestamp:   try!(Deserialize::deserialize(deserializer)),
-            bits:        try!(Deserialize::deserialize(deserializer)),
-            nonce:       try!(Deserialize::deserialize(deserializer)),
-        })
-    }
-}
-
-#[derive(Debug)]
 pub struct BlockMessage {
     pub metadata: BlockMetadata,
     pub txns: Vec<TxMessage>,

@@ -371,7 +371,7 @@ impl State {
     fn get_message_length(&self) -> Option<usize> {
         let mut cursor = Cursor::new(&self.reading_buf);
         MessageHeader::deserialize(&mut cursor)
-            .map(|h| Some(h.len() as usize)).unwrap_or(None)
+            .map(|h| Some(h.length as usize)).unwrap_or(None)
     }
 
     pub fn mut_read_buf(&mut self) -> &mut Vec<u8> {
