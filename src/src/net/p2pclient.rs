@@ -214,7 +214,7 @@ impl BitcoinClient {
             network_type: network_type,
         };
 
-        // client.channel.send(Message::Connect("127.0.0.1:18333".parse().unwrap())).unwrap();
+        client.channel.send(Message::Connect("127.0.0.1:18333".parse().unwrap())).unwrap();
         client
     }
 
@@ -340,17 +340,19 @@ impl BitcoinClient {
     }
 
     fn handle_getblocks(&self, message: GetHeadersMessage, token: mio::Token) {
-        for hash in message.block_locators.iter().rev() {
+        for hash in message.block_locators.iter() {
             if self.lock_state().block_height(hash).is_some() {
-                self.send_inv(hash, token);
+                self.send_inv(hash, message.hash_stop, token);
                 break;
             }
         }
     }
 
-    fn send_inv(&self, start_hash: &BitcoinHash, token: mio::Token) {
+    fn send_inv(&self, hash_start: &BitcoinHash, hash_stop: BitcoinHash, token: mio::Token) {
         let state = self.state.lock().unwrap();
-        let mut cur_hash = start_hash.clone();
+        println!("send_inv height={:?}", state.block_height(hash_start));
+
+        let mut cur_hash = hash_start.clone();
         let mut cur = match state.get_block_metadata(&cur_hash) {
             Some(block) => block,
             None        => {
@@ -365,6 +367,11 @@ impl BitcoinClient {
         let mut inv = vec![];
 
         for _ in 0..500 {
+            // If we hit [0;32] it means that cur is the genesis block
+            if cur.prev_block == hash_stop || *cur.prev_block.inner() == [0; 32] {
+                break;
+            }
+
             inv.push(InventoryVector::new(InventoryVectorType::MSG_BLOCK,
                                           cur_hash));
             cur_hash = cur.prev_block;
@@ -372,7 +379,9 @@ impl BitcoinClient {
                 .expect(&format!("Could not find metadata for {:?}", cur_hash));
         }
 
-        self.send_message(Command::Inv, token, Some(Box::new(InvMessage::new(inv))));
+        if inv.len() > 0 {
+            self.send_message(Command::Inv, token, Some(Box::new(InvMessage::new(inv))));
+        }
     }
 
     fn handle_filterload(&self, message: FilterLoadMessage, _: mio::Token) {
