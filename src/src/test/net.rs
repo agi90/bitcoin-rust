@@ -29,7 +29,7 @@ fn test_version_message() {
              0xC0, 0x3E, 0x03, 0x00];
 
     let mut deserializer = Cursor::new(&buffer[..]);
-    let message = VersionMessage::deserialize(&mut deserializer, &[]).unwrap();
+    let message = VersionMessage::deserialize(&mut deserializer).unwrap();
 
     assert_eq!(message.version, 60002);
     assert_eq!(message.services, Services::new(true));
@@ -38,7 +38,7 @@ fn test_version_message() {
     assert_eq!(message.relay, false);
 
     let mut result_buffer = Cursor::new(vec![]);
-    message.serialize(&mut result_buffer, &[]);
+    message.serialize(&mut result_buffer);
 
     let result = result_buffer.into_inner();
     Debug::print_bytes(&result);
@@ -82,12 +82,12 @@ fn test_complete_message() {
          0xC0, 0x3E, 0x03, 0x00];
 
     let mut deserializer = Cursor::new(&buffer[..]);
-    let header  = MessageHeader::deserialize(&mut deserializer, &[]).unwrap();
+    let header  = MessageHeader::deserialize(&mut deserializer).unwrap();
     assert_eq!(header.network_type, NetworkType::Main);
     assert_eq!(header.command, Command::Version);
     assert_eq!(header.length, 100);
 
-    let message = VersionMessage::deserialize(&mut deserializer, &[]).unwrap();
+    let message = VersionMessage::deserialize(&mut deserializer).unwrap();
 
     let serialized = get_serialized_message(NetworkType::Main, Command::Version, Some(Box::new(message)));
     Debug::print_bytes(&serialized);

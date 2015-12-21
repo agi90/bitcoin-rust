@@ -319,7 +319,7 @@ impl BitcoinClient {
         let mut peers = vec![];
         for peer in state.get_peers().values() {
             if let Some(ref version) = peer.version {
-                peers.push((peer.ping_time(), version.addr_from));
+                peers.push((ShortFormatTm::new(peer.ping_time()), version.addr_from));
             }
         }
 
@@ -450,32 +450,32 @@ impl BitcoinClient {
 
         match header.command() {
             &Command::Tx => {
-                let message = try!(TxMessage::deserialize(message_bytes, &[]));
+                let message = try!(TxMessage::deserialize(message_bytes));
                 self.handle_tx(message, token);
             },
             &Command::GetData => {
-                let message = try!(InvMessage::deserialize(message_bytes, &[]));
+                let message = try!(InvMessage::deserialize(message_bytes));
                 self.handle_getdata(message, token);
             },
             &Command::NotFound => {
-                let message = try!(InvMessage::deserialize(message_bytes, &[]));
+                let message = try!(InvMessage::deserialize(message_bytes));
                 self.handle_notfound(message, token);
             },
             &Command::Inv => {
-                let message = try!(InvMessage::deserialize(message_bytes, &[]));
+                let message = try!(InvMessage::deserialize(message_bytes));
                 self.handle_inv(message, token);
             },
             &Command::Pong => {
                 // Ping and Pong message use the same format
-                let message = try!(PingMessage::deserialize(message_bytes, &[]));
+                let message = try!(PingMessage::deserialize(message_bytes));
                 self.handle_pong(message, token);
             },
             &Command::Ping => {
-                let message = try!(PingMessage::deserialize(message_bytes, &[]));
+                let message = try!(PingMessage::deserialize(message_bytes));
                 self.handle_ping(message, token);
             },
             &Command::Version => {
-                let message = try!(VersionMessage::deserialize(message_bytes, &[]));
+                let message = try!(VersionMessage::deserialize(message_bytes));
                 self.handle_version(message, token);
             },
             &Command::Verack => {
@@ -485,28 +485,28 @@ impl BitcoinClient {
                 self.handle_getaddr(token);
             },
             &Command::Block => {
-                let message = try!(BlockMessage::deserialize(message_bytes, &[]));
+                let message = try!(BlockMessage::deserialize(message_bytes));
                 assert_eq!(message_bytes.get_ref().len() as u64, message_bytes.position());
                 self.handle_block(message, token, message_bytes);
             },
             &Command::GetBlocks => {
-                let message = try!(GetHeadersMessage::deserialize(message_bytes, &[]));
+                let message = try!(GetHeadersMessage::deserialize(message_bytes));
                 self.handle_getblocks(message, token);
             },
             &Command::GetHeaders => {
-                let message = try!(GetHeadersMessage::deserialize(message_bytes, &[]));
+                let message = try!(GetHeadersMessage::deserialize(message_bytes));
                 self.handle_getheaders(message, token);
             },
             &Command::Headers => {
-                let message = try!(HeadersMessage::deserialize(message_bytes, &[]));
+                let message = try!(HeadersMessage::deserialize(message_bytes));
                 self.handle_headers(message, token);
             },
             &Command::Addr => {
-                let message = try!(AddrMessage::deserialize(message_bytes, &[]));
+                let message = try!(AddrMessage::deserialize(message_bytes));
                 self.handle_addr(message, token);
             },
             &Command::Reject => {
-                let message = try!(RejectMessage::deserialize(message_bytes, &[]));
+                let message = try!(RejectMessage::deserialize(message_bytes));
                 self.handle_reject(message, token);
             },
             &Command::Unknown => {
@@ -521,7 +521,7 @@ impl BitcoinClient {
 impl rpcengine::MessageHandler for BitcoinClient {
     fn handle(&self, token: mio::Token, message: Vec<u8>) {
         let mut cursor = Cursor::new(&message[..]);
-        let handled = MessageHeader::deserialize(&mut cursor, &[])
+        let handled = MessageHeader::deserialize(&mut cursor)
             .and_then(|m| self.handle_command(m, token, &mut cursor));
 
         if let Err(x) = handled {

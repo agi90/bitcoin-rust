@@ -26,9 +26,9 @@ impl BlockBlobStore {
             .map(|pos| {
                 self.disk_store.seek(SeekFrom::Start(pos as u64)).unwrap();
 
-                let length: u64        = Deserialize::deserialize(&mut self.disk_store, &[]).unwrap();
-                let hash: BitcoinHash  = Deserialize::deserialize(&mut self.disk_store, &[]).unwrap();
-                let block: BlockMessage= Deserialize::deserialize(&mut self.disk_store, &[]).unwrap();
+                let length: u64        = Deserialize::deserialize(&mut self.disk_store).unwrap();
+                let hash: BitcoinHash  = Deserialize::deserialize(&mut self.disk_store).unwrap();
+                let block: BlockMessage= Deserialize::deserialize(&mut self.disk_store).unwrap();
 
                 let (serialized, real_hash) = block.serialize_hash();
 
@@ -42,9 +42,9 @@ impl BlockBlobStore {
     pub fn insert(&mut self, block: BlockMessage, hash: &BitcoinHash, data: &[u8]) {
         if self.store.get(hash).is_none() {
             // Let's save the length and hash to double check data on disk
-            (data.len() as u64).serialize(&mut self.disk_store, &[]);
-            hash.serialize(&mut self.disk_store, &[]);
-            data.serialize(&mut self.disk_store, &[]);
+            (data.len() as u64).serialize(&mut self.disk_store);
+            hash.serialize(&mut self.disk_store);
+            data.serialize(&mut self.disk_store);
 
             self.store.insert(hash.clone(), (block.into_metadata(), self.last_index));
 
@@ -55,10 +55,10 @@ impl BlockBlobStore {
 
     fn get_next_object(file: &mut File) ->
         Result<(u64, BitcoinHash, BlockMetadata), String> {
-        let length: u64 = try!(Deserialize::deserialize(file, &[]));
-        let hash: BitcoinHash = try!(Deserialize::deserialize(file, &[]));
-        let block: BlockMessage = try!(Deserialize::deserialize(file, &[]));
-        // let data: BlockMetadata = try!(Deserialize::deserialize(file, &[]));
+        let length: u64 = try!(Deserialize::deserialize(file));
+        let hash: BitcoinHash = try!(Deserialize::deserialize(file));
+        let block: BlockMessage = try!(Deserialize::deserialize(file));
+        // let data: BlockMetadata = try!(Deserialize::deserialize(file));
         // file.seek(SeekFrom::Current((length - 80) as i64)).unwrap();
 
         Ok((length, hash, block.metadata))
