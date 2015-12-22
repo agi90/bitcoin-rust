@@ -13,11 +13,14 @@ extern crate mio;
 extern crate bytes;
 extern crate rand;
 
+use std::net::SocketAddr;
+
 use utils::Config;
 
 pub fn main() {
     let config = Config::from_command_line().unwrap_or_else(
         |e| { println!("Error: {}", e); panic!() });
 
-    net::p2pclient::start(format!("0.0.0.0:{}", config.port).parse().unwrap(), config.blocks_file);
+    let addr: SocketAddr = format!("0.0.0.0:{}", config.port).parse().unwrap();
+    net::p2pclient::start(addr, config.connect_to, config.blocks_file);
 }

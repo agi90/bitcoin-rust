@@ -74,6 +74,10 @@ impl State {
         }
     }
 
+    pub fn is_pending_inv(&mut self, hash: &BitcoinHash) -> bool{
+        self.pending_inv.has(hash)
+    }
+
     pub fn add_inv(&mut self, hash: BitcoinHash) {
         println!("inv for {:?}", hash);
         self.pending_inv.insert(hash);
@@ -123,6 +127,14 @@ impl State {
 
     pub fn add_tx(&mut self, tx: TxMessage) {
         self.tx_store.insert(tx.hash(), tx);
+    }
+
+    pub fn get_hash_at_height(&self, height: usize) -> Option<&BitcoinHash> {
+        self.block_store.get_hash_at_height(height)
+    }
+
+    pub fn get_block(&mut self, hash: &BitcoinHash) -> Option<BlockMessage> {
+        self.block_store.get(hash)
     }
 
     pub fn get_block_metadata(&self, hash: &BitcoinHash) -> Option<&BlockMetadata> {
@@ -214,8 +226,11 @@ impl BitcoinClient {
             network_type: network_type,
         };
 
-        client.channel.send(Message::Connect("127.0.0.1:18333".parse().unwrap())).unwrap();
         client
+    }
+
+    pub fn connect(&self, address: SocketAddr) {
+        self.channel.send(Message::Connect(address)).unwrap();
     }
 
     fn send_message(&self, command: Command, token: mio::Token,
@@ -350,33 +365,25 @@ impl BitcoinClient {
 
     fn send_inv(&self, hash_start: &BitcoinHash, hash_stop: BitcoinHash, token: mio::Token) {
         let state = self.state.lock().unwrap();
-        println!("send_inv height={:?}", state.block_height(hash_start));
 
-        let mut cur_hash = hash_start.clone();
-        let mut cur = match state.get_block_metadata(&cur_hash) {
-            Some(block) => block,
-            None        => {
-                let reject =
-                    RejectMessage::new(Command::GetBlocks, 0,
-                                       "GetBlocks doesn't start with genesis block.".to_string());
-                self.send_message(Command::Reject, token, Some(Box::new(reject)));
-                return;
-            },
-        };
+        let height = state.block_height(hash_start)
+                .expect(&format!("Could not find height for {:?}", hash_start));
+
+        println!("send_inv token={:?} height={:?}", token, height);
 
         let mut inv = vec![];
 
-        for _ in 0..500 {
-            // If we hit [0;32] it means that cur is the genesis block
-            if cur.prev_block == hash_stop || *cur.prev_block.inner() == [0; 32] {
-                break;
+        for h in height..height+500 {
+            match state.get_hash_at_height(h) {
+                Some(hash) => {
+                    inv.push(InventoryVector::new(InventoryVectorType::MSG_BLOCK,
+                                       *hash));
+                    if hash_stop == *hash {
+                        break;
+                    }
+                }
+                None => break,
             }
-
-            inv.push(InventoryVector::new(InventoryVectorType::MSG_BLOCK,
-                                          cur_hash));
-            cur_hash = cur.prev_block;
-            cur = state.get_block_metadata(&cur_hash)
-                .expect(&format!("Could not find metadata for {:?}", cur_hash));
         }
 
         if inv.len() > 0 {
@@ -402,10 +409,20 @@ impl BitcoinClient {
         self.get_blocks(&mut state, token);
     }
 
-    fn handle_getdata(&self, message: InvMessage, _: mio::Token) {
-        // TODO
-        println!("Got getdata {:?}", message);
-        panic!();
+    fn handle_getdata(&self, message: InvMessage, token: mio::Token) {
+        let mut state = self.state.lock().unwrap();
+
+        for inventory in message.inventory {
+            match inventory.type_ {
+                InventoryVectorType::MSG_TX => unimplemented!(),
+                InventoryVectorType::MSG_BLOCK => {
+                    if let Some(block) = state.get_block(&inventory.hash) {
+                        self.send_message(Command::Block, token, Some(Box::new(block)));
+                    }
+                },
+                type_ => println!("Unhandled inv {:?}", type_),
+            }
+        }
     }
 
     fn handle_notfound(&self, message: InvMessage, _: mio::Token) {
@@ -428,7 +445,8 @@ impl BitcoinClient {
                     }
                 },
                 InventoryVectorType::MSG_BLOCK => {
-                    if !state.has_block(&inventory.hash) {
+                    if !state.has_block(&inventory.hash) &&
+                       !state.is_pending_inv(&inventory.hash) {
                         new_data.push(InventoryVector::new(
                                 InventoryVectorType::MSG_BLOCK,
                                 inventory.hash));
@@ -463,7 +481,6 @@ impl BitcoinClient {
 
     fn handle_command(&self, header: MessageHeader, token: mio::Token,
                       message_bytes: &mut Cursor<&[u8]>) -> Result<(), String> {
-
         if header.network_type != self.network_type {
             // This packet is not for the right version :O
             return Err(format!("Received packet for wrong version: {:?}", header.network_type));
@@ -574,7 +591,7 @@ impl rpcengine::MessageHandler for BitcoinClient {
     }
 }
 
-pub fn start(address: SocketAddr, blocks_file: File) {
+pub fn start(address: SocketAddr, connect_to: Option<SocketAddr>, blocks_file: File) {
     let server = tcp::TcpListener::bind(&address).unwrap();
     let mut event_loop = mio::EventLoop::new().unwrap();
     event_loop.register(&server, rpcengine::SERVER, mio::EventSet::readable(),
@@ -582,13 +599,20 @@ pub fn start(address: SocketAddr, blocks_file: File) {
 
     let state = Arc::new(Mutex::new(State::new(NetworkType::TestNet3, blocks_file)));
 
-    let client = BitcoinClient::new(state.clone(), event_loop.channel(), NetworkType::TestNet3);
+    let client = Arc::new(
+            BitcoinClient::new(state.clone(), event_loop.channel(), NetworkType::TestNet3));
+
+    let handler: Arc<rpcengine::MessageHandler> = client.clone();
 
     println!("running bitcoin server; port={}", address.port());
     let child = thread::spawn(move || {
-        let mut engine = RPCEngine::new(server, Box::new(client));
+        let mut engine = RPCEngine::new(server, handler);
         event_loop.run(&mut engine).unwrap();
     });
+
+    if let Some(address) = connect_to {
+        client.connect(address);
+    }
 
     let _ = child.join();
 }

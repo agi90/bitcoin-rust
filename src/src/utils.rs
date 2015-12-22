@@ -5,10 +5,12 @@ use crypto::ripemd160;
 
 use std::env;
 use std::fs::{File, OpenOptions};
+use std::net::SocketAddr;
 
 pub struct Config {
     pub port: u16,
     pub blocks_file: File,
+    pub connect_to: Option<SocketAddr>,
 }
 
 impl Config {
@@ -31,6 +33,7 @@ impl Config {
         let mut config = Config {
             port: 18333,
             blocks_file: try!(Self::get_store("block.dat")),
+            connect_to: None,
         };
 
         loop {
@@ -38,6 +41,8 @@ impl Config {
                 Some(arg) => {
                     let next = args.next();
                     match arg.as_ref() {
+                        "-c" | "--connect" =>
+                            config.connect_to = Some(try!(Self::parse_address(next))),
                         "-p" | "--port" =>
                             config.port = try!(Self::parse_port(next)),
                         "-f" | "--block-file" =>
@@ -52,10 +57,18 @@ impl Config {
         Ok(config)
     }
 
+    fn parse_address(arg: Option<String>) -> Result<SocketAddr, String> {
+        match arg {
+            Some(address) => address.parse()
+                .map_err(|e| format!("Unrecognized address `{}`, message: {:?}", address, e)),
+            None => Err(format!("Missing address.")),
+        }
+    }
+
     fn parse_block_file(arg: Option<String>) -> Result<File, String> {
         match arg {
             Some(ref path) => Self::get_store(path),
-            None => Err(format!("Missing port.")),
+            None => Err(format!("Missing block file.")),
         }
     }
 

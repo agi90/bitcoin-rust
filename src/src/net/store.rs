@@ -112,8 +112,16 @@ pub struct BlockStore {
 impl BlockStore {
     pub fn has(&self, hash: &BitcoinHash) -> bool { self.store.has(hash) }
 
+    pub fn get(&mut self, hash: &BitcoinHash) -> Option<BlockMessage> {
+        self.store.get_block(hash)
+    }
+
     pub fn get_metadata(&self, hash: &BitcoinHash) -> Option<&BlockMetadata> {
         self.store.get(hash)
+    }
+
+    pub fn get_hash_at_height(&self, height: usize) -> Option<&BitcoinHash> {
+        self.height_store.get(height)
     }
 
     pub fn get_height(&self, hash: &BitcoinHash) -> Option<usize> {

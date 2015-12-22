@@ -30,7 +30,7 @@ pub trait MessageHandler: Sync + Send {
 pub struct RPCEngine {
     server: TcpListener,
     connections: Slab<Connection>,
-    handler: Arc<Box<MessageHandler>>,
+    handler: Arc<MessageHandler>,
     jobs: Arc<Mutex<VecDeque<(mio::Token, Vec<u8>)>>>,
     threads_counter: Arc<Mutex<usize>>,
 }
@@ -56,13 +56,13 @@ impl RPCEngine {
         });
     }
 
-    pub fn new(server: TcpListener, handler: Box<MessageHandler>) -> RPCEngine {
+    pub fn new(server: TcpListener, handler: Arc<MessageHandler>) -> RPCEngine {
         // Token 0 is reserver for the server
         let slab = Slab::new_starting_at(mio::Token(1), 1024);
         let engine = RPCEngine {
             server: server,
             connections: slab,
-            handler: Arc::new(handler),
+            handler: handler,
             jobs: Arc::new(Mutex::new(VecDeque::new())),
             threads_counter: Arc::new(Mutex::new(0)),
         };
