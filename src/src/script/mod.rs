@@ -3,8 +3,6 @@ mod human_parser;
 
 use utils::IntUtils;
 
-use std::cmp;
-use std::fmt;
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -20,6 +18,7 @@ pub struct Context<'a> {
     conditional_executed: Vec<bool>,
 }
 
+#[derive(Debug, PartialEq)]
 pub struct ScriptElement<'a> {
     op_code: &'a OpCode,
     data: Vec<u8>,
@@ -59,20 +58,6 @@ impl<'a> ScriptElement<'a> {
             next_else: None,
             id: id,
         }
-    }
-}
-
-impl<'a> cmp::PartialEq for ScriptElement<'a> {
-    fn eq(&self, other: &ScriptElement) -> bool {
-        self.op_code == other.op_code && self.data == other.data &&
-            self.id == other.id
-    }
-}
-
-impl<'a> fmt::Debug for ScriptElement<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "ScriptElement(id={}, op_code={:?}, data={:?})",
-        self.id, self.op_code.name, self.data)
     }
 }
 
