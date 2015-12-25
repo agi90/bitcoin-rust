@@ -24,7 +24,6 @@ use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard, Arc};
 use std::thread;
 
-use mio::Token;
 use mio::Sender;
 
 use super::store::BlockStore;

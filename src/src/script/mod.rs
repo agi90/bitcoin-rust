@@ -1,13 +1,14 @@
 mod op_codes;
 mod human_parser;
 
+use self::op_codes::OpCode;
+
 use utils::IntUtils;
 
-use std::collections::HashMap;
 use std::rc::Rc;
 
-pub struct Context<'a> {
-    data: Rc<ScriptElement<'a>>,
+pub struct Context {
+    data: Rc<ScriptElement>,
     stack: Vec<Vec<u8>>,
     valid: bool,
     altstack: Vec<Vec<u8>>,
@@ -19,23 +20,16 @@ pub struct Context<'a> {
 }
 
 #[derive(Debug, PartialEq)]
-pub struct ScriptElement<'a> {
-    op_code: &'a OpCode,
+pub struct ScriptElement {
+    op_code: OpCode,
     data: Vec<u8>,
-    next: Option<Rc<ScriptElement<'a>>>,
-    next_else: Option<Rc<ScriptElement<'a>>>,
+    next: Option<Rc<ScriptElement>>,
+    next_else: Option<Rc<ScriptElement>>,
     id: usize,
 }
 
-pub struct OpCode {
-    pub name: &'static str,
-    pub code: u8,
-    advancing: bool,
-    parser: fn(Context) -> Context,
-}
-
-impl<'a> Context<'a> {
-    pub fn new(data: Rc<ScriptElement<'a>>, stack: Vec<Vec<u8>>,
+impl Context {
+    pub fn new(data: Rc<ScriptElement>, stack: Vec<Vec<u8>>,
                checksig: fn(usize, &Vec<u8>, &Vec<u8>) -> bool) -> Context {
         Context {
             data: data,
@@ -49,8 +43,8 @@ impl<'a> Context<'a> {
     }
 }
 
-impl<'a> ScriptElement<'a> {
-    pub fn new(op_code: &'a OpCode, data: Vec<u8>, id: usize) -> ScriptElement {
+impl ScriptElement {
+    pub fn new(op_code: OpCode, data: Vec<u8>, id: usize) -> ScriptElement {
         ScriptElement {
             op_code: op_code,
             data: data,
@@ -61,66 +55,23 @@ impl<'a> ScriptElement<'a> {
     }
 }
 
-impl OpCode {
-    fn new(name: &'static str, code: u8, advancing: bool,
-           parser: fn(Context) -> Context) -> OpCode {
-        OpCode {
-            name: name,
-            code: code,
-            advancing: advancing,
-            parser: parser,
-        }
-    }
-}
-
-pub struct Parser {
-    op_codes : HashMap<u8, OpCode>,
-    human_readable_parser: human_parser::Parser,
-}
+pub struct Parser;
 
 impl Parser {
-    pub fn new() -> Parser {
-        let mut op_codes = HashMap::new();
-
-        for op_code in op_codes::OP_CODES.iter()
-            .map(|op| (op.1, OpCode::new(op.0, op.1, op.2, op.3))) {
-                op_codes.insert(op_code.0, op_code.1);
-            };
-
-        for op in 0x01..0x4c {
-            op_codes.insert(op, OpCode::new(op_codes::OP_PUSHDATA.0,
-                                            op,
-                                            op_codes::OP_PUSHDATA.2,
-                                            op_codes::OP_PUSHDATA.3));
-        }
-
-        for op in 0xbau16..0x100u16 {
-            op_codes.insert(op as u8, OpCode::new(op_codes::OP_INVALID.0,
-                                            op as u8,
-                                            op_codes::OP_INVALID.2,
-                                            op_codes::OP_INVALID.3));
-        }
-
-        Parser {
-            op_codes: op_codes,
-            human_readable_parser: human_parser::Parser::new(&op_codes::OP_CODES),
-        }
+    pub fn preprocess_human_readable(script: &str) -> Result<Vec<u8>, String> {
+        human_parser::Parser::parse(script)
     }
 
-    pub fn preprocess_human_readable(&self, script: &str) -> Result<Vec<u8>, String> {
-        self.human_readable_parser.parse(script)
-    }
-
-    pub fn parse_human_readable(&self, script: &str) -> Result<Rc<ScriptElement>, String> {
-        let human_parsed = self.preprocess_human_readable(script);
+    pub fn parse_human_readable(script: &str) -> Result<Rc<ScriptElement>, String> {
+        let human_parsed = Self::preprocess_human_readable(script);
 
         match human_parsed {
             Err(x) => Err(x),
-            Ok(x) => self.parse(x),
+            Ok(x) => Self::parse(x),
         }
     }
 
-    fn get_data(&self, script: &mut Vec<u8>, bytes: i32) -> Result<Vec<u8>, String> {
+    fn get_data(script: &mut Vec<u8>, bytes: i32) -> Result<Vec<u8>, String> {
         let mut data = Vec::new();
 
         for _ in 0..bytes {
@@ -134,7 +85,7 @@ impl Parser {
         Ok(data)
     }
 
-    fn get_data_bytes(&self, script: &mut Vec<u8>, bytes: u8) -> Result<Vec<u8>, String> {
+    fn get_data_bytes(script: &mut Vec<u8>, bytes: u8) -> Result<Vec<u8>, String> {
         assert!(bytes <= 4);
         assert!(script.len() >= bytes as usize);
 
@@ -150,10 +101,10 @@ impl Parser {
         // use 0xFF as argument for PUSHDATA1 which clearly is not a i32.
         let number = IntUtils::to_u32(&vec_u8_number);
 
-        self.get_data(script, number as i32)
+        Self::get_data(script, number as i32)
     }
 
-    fn to_script_elements(&self, script_: Vec<u8>)
+    fn to_script_elements(script_: Vec<u8>)
     -> Result<Vec<Box<ScriptElement>>, String> {
         let mut script = script_;
         let mut script_elements: Vec<Box<ScriptElement>> = vec![];
@@ -163,22 +114,21 @@ impl Parser {
             // When the script is empty we just return a singleton
             // with OP_NOP which is equivalent but makes things easier
             // for us
-            let op_nop = self.op_codes.get(&op_codes::OP_NOP).unwrap();
-            return Ok(vec![Box::new(ScriptElement::new(op_nop, vec![], 0))]);
+            return Ok(vec![Box::new(ScriptElement::new(OpCode::Nop, vec![], 0))]);
         }
 
         script.reverse();
         while script.len() > 0 {
             let op_code = script.pop().unwrap();
-            let op = match self.op_codes.get(&op_code) {
+            let op = match OpCode::from_byte(op_code) {
                 Some(x) => x,
                 None => return Err(format!("Op `0x{:2x}` not recognized.", op_code)),
             };
 
             let id = len - script.len() - 1;
 
-            let data = match op.code {
-                0x01 ... 0x4b => self.get_data(&mut script, op.code as i32),
+            let data = match op.to_byte() {
+                0x01 ... 0x4b => Self::get_data(&mut script, op.to_byte() as i32),
                 // PUSHDATA{1,2,4}
                 0x4c ... 0x4e => {
                     let bytes = match op_code {
@@ -188,7 +138,7 @@ impl Parser {
                         _ => unreachable!(),
                     };
 
-                    self.get_data_bytes(&mut script, bytes)
+                    Self::get_data_bytes(&mut script, bytes)
                 },
                 _ => Ok(vec![]),
             };
@@ -200,7 +150,7 @@ impl Parser {
         Ok(script_elements)
     }
 
-    fn compile_ifs<'a>(&'a self, script_: Vec<Box<ScriptElement<'a>>>)
+    fn compile_ifs(script_: Vec<Box<ScriptElement>>)
     -> Result<Vec<(Box<ScriptElement>, u32)>, String> {
         let mut script = script_;
         script.reverse();
@@ -210,18 +160,17 @@ impl Parser {
 
         while script.len() > 0 {
             let element = script.pop().unwrap();
-            let code = element.op_code.code;
 
-            match code {
-                op_codes::OP_ENDIF |
-                op_codes::OP_ELSE  => { level -= 1 },
+            let op_code = element.op_code;
+            match op_code {
+                OpCode::EndIf | OpCode::Else => { level -= 1 },
                 _ => {},
             };
 
             script_elements.push((element, level));
 
-            match code {
-                op_codes::OP_IF | op_codes::OP_ELSE | op_codes::OP_NOTIF => { level += 1 },
+            match op_code {
+                OpCode::If | OpCode::Else | OpCode::NotIf => { level += 1 },
                 _ => {},
             };
         }
@@ -234,22 +183,22 @@ impl Parser {
     }
 
 
-    fn build_script<'a>(&'a self, script_elements_: Vec<(Box<ScriptElement<'a>>, u32)>,
+    fn build_script(script_elements_: Vec<(Box<ScriptElement>, u32)>,
                         level: u32) -> Option<(Rc<ScriptElement>, u32)>
     {
         let mut script_elements = script_elements_;
 
         while script_elements.len() > 1 {
-            let code = script_elements.last().unwrap().0.op_code.code;
+            let code = script_elements.last().unwrap().0.op_code;
             let parent = Rc::new(*script_elements.pop().unwrap().0);
             script_elements.last_mut().unwrap().0.next = Some(parent.clone());
 
-            if code == op_codes::OP_ENDIF || code == op_codes::OP_ELSE {
-                let branch = self.get_next_branch(&mut script_elements, level);
+            if code == OpCode::EndIf || code == OpCode::Else {
+                let branch = Self::get_next_branch(&mut script_elements, level);
                 let mut branching_el = script_elements.last_mut().unwrap();
 
                 branching_el.0.next = if branch.len() > 0 {
-                    Some(self.build_script(branch, level + 1).unwrap().0)
+                    Some(Self::build_script(branch, level + 1).unwrap().0)
                 } else {
                     Some(parent.clone())
                 };
@@ -261,11 +210,11 @@ impl Parser {
         script_elements.pop().map(|x| (Rc::new(*x.0), x.1))
     }
 
-    pub fn parse(&self, script: Vec<u8>) -> Result<Rc<ScriptElement>, String> {
+    pub fn parse(script: Vec<u8>) -> Result<Rc<ScriptElement>, String> {
         print!("parse={:?}\n", script);
-        let elements = self.to_script_elements(script);
-        let compiled = self.compile_ifs(elements.unwrap());
-        let head     = self.build_script(compiled.unwrap(), 0);
+        let elements = Self::to_script_elements(script);
+        let compiled = Self::compile_ifs(elements.unwrap());
+        let head     = Self::build_script(compiled.unwrap(), 0);
 
         match head {
             Some(x) => {
@@ -275,9 +224,8 @@ impl Parser {
         }
     }
 
-    fn get_next_branch<'a>(&'a self,
-                           script_elements: &mut Vec<(Box<ScriptElement<'a>>, u32)>,
-                           level: u32) -> Vec<(Box<ScriptElement<'a>>, u32)> {
+    fn get_next_branch(script_elements: &mut Vec<(Box<ScriptElement>, u32)>,
+                           level: u32) -> Vec<(Box<ScriptElement>, u32)> {
         let mut branch = vec![];
         while script_elements.last().unwrap().1 != level {
             let el = script_elements.pop().unwrap();
@@ -288,15 +236,15 @@ impl Parser {
 
     fn no_checksig_allowed(_: usize, _: &Vec<u8>, _: &Vec<u8>) -> bool { false }
 
-    pub fn execute(&self, sig_script_: Vec<u8>, script_pub_key_: Vec<u8>,
+    pub fn execute(sig_script_: Vec<u8>, script_pub_key_: Vec<u8>,
                    checksig: fn(usize, &Vec<u8>, &Vec<u8>) -> bool)
     -> Result<bool, String> {
-        let sig_script = try!(self.parse(sig_script_));
-        let script_pub_key = try!(self.parse(script_pub_key_));
+        let sig_script = try!(Self::parse(sig_script_));
+        let script_pub_key = try!(Self::parse(script_pub_key_));
 
         // OP_CHECKSIG is not allowed when executing sigScript
         // TODO: ideally we should just invalidate the context
-        let sig_script_context = try!(self.execute_base(vec![],
+        let sig_script_context = try!(Self::execute_base(vec![],
                                                         sig_script,
                                                         Parser::no_checksig_allowed));
 
@@ -304,25 +252,25 @@ impl Parser {
             return Ok(false);
         }
 
-        let script_pub_key_context = try!(self.execute_base(sig_script_context.stack,
+        let script_pub_key_context = try!(Self::execute_base(sig_script_context.stack,
                                                             script_pub_key, checksig));
 
         Ok(script_pub_key_context.valid &&
            op_codes::is_true(&script_pub_key_context.stack.last()))
     }
 
-    fn execute_base<'a>(&'a self, input_stack: Vec<Vec<u8>>,
-                   parsed_script: Rc<ScriptElement<'a>>,
+    fn execute_base(input_stack: Vec<Vec<u8>>,
+                   parsed_script: Rc<ScriptElement>,
                    checksig: fn(usize, &Vec<u8>, &Vec<u8>) -> bool)
     -> Result<Context, String> {
         let mut context = Context::new(parsed_script, input_stack, checksig);
         let mut done = false;
 
         while !done && context.valid {
-            let ref advancing = context.data.op_code.advancing;
-            let ref parser = context.data.op_code.parser;
+            let ref advancing = context.data.op_code.is_advancing();
+            let op_code = context.data.op_code;
 
-            let mut new_context = parser(context);
+            let mut new_context = op_code.execute(context);
 
             if !advancing {
                 match new_context.data.next.clone() {
@@ -359,9 +307,9 @@ mod tests {
         }
     }
 
-    fn check_script(script: &str, parser: &Parser) -> Result<bool, String> {
-        let raw_script = try!(parser.preprocess_human_readable(script));
-        let data = try!(parser.parse(raw_script.clone()));
+    fn check_script(script: &str) -> Result<bool, String> {
+        let raw_script = try!(Parser::preprocess_human_readable(script));
+        let data = try!(Parser::parse(raw_script.clone()));
 
         if raw_script.len() == 0 {
             return Ok(true);
@@ -375,9 +323,9 @@ mod tests {
 
             // Test that the id and the actual position in the script coincide
             // TODO: test both branches of the if.
-            if raw_script[e.id] != e.op_code.code {
+            if raw_script[e.id] != e.op_code.to_byte() {
                 return Err(
-                    format!("Mismatched op at {}, {} != {}\n", e.id, raw_script[e.id], e.op_code.code));
+                    format!("Mismatched op at {}, {} != {}\n", e.id, raw_script[e.id], e.op_code.to_byte()));
             }
 
             el = e.next.clone();
@@ -393,20 +341,18 @@ mod tests {
         print!("\n\n sig=`{}` pub_key=`{}` [expected={}]\n",
                script_sig, script_pub_key, expected);
 
-        let parser = Parser::new();
-
         if script_sig.len() > 0 {
-            try!(check_script(script_sig, &parser));
+            try!(check_script(script_sig));
         }
 
         if script_pub_key.len() > 0 {
-            try!(check_script(script_pub_key, &parser));
+            try!(check_script(script_pub_key));
         }
 
-        let raw_script_sig = parser.preprocess_human_readable(script_sig).unwrap();
-        let raw_script_pub_key = parser.preprocess_human_readable(script_pub_key).unwrap();
+        let raw_script_sig = Parser::preprocess_human_readable(script_sig).unwrap();
+        let raw_script_pub_key = Parser::preprocess_human_readable(script_pub_key).unwrap();
 
-        let result = parser.execute(raw_script_sig, raw_script_pub_key, checksig).unwrap();
+        let result = Parser::execute(raw_script_sig, raw_script_pub_key, checksig).unwrap();
         Ok(result == expected)
     }
 

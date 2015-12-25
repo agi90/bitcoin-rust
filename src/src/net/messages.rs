@@ -724,7 +724,7 @@ impl Serialize for NetworkType {
 }
 
 #[allow(non_camel_case_types)]
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum InventoryVectorType {
     ERROR,
     MSG_TX,
@@ -761,7 +761,7 @@ impl Deserialize for InventoryVectorType {
 
 macro_rules! message {
     ($name:ident ; $($element: ident: $ty: ty),*) => {
-        #[derive(Debug, PartialEq)]
+        #[derive(Debug, Clone, PartialEq)]
         pub struct $name { $(pub $element: $ty),* }
 
         impl $name {
@@ -879,6 +879,7 @@ message!(BlockMetadata;
     nonce: u32
 );
 
+#[derive(Debug, Clone, PartialEq)]
 pub struct BlockMessage {
     pub metadata: BlockMetadata,
     pub txns: Vec<TxMessage>,
