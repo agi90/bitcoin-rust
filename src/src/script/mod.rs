@@ -6,6 +6,7 @@ use self::op_codes::OpCode;
 use utils::IntUtils;
 
 use std::rc::Rc;
+use std::fmt;
 
 pub struct Context {
     data: Rc<ScriptElement>,
@@ -26,6 +27,29 @@ pub struct ScriptElement {
     next: Option<Rc<ScriptElement>>,
     next_else: Option<Rc<ScriptElement>>,
     id: usize,
+}
+
+impl fmt::Display for ScriptElement {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        if self.data.len() == 0 {
+            try!(write!(f, "{}", self.op_code.to_str()));
+        } else {
+            try!(write!(f, "0x"));
+            for byte in &self.data {
+                try!(write!(f, "{:02X}", byte));
+            }
+        }
+
+        if self.next.is_some() {
+            try!(write!(f, " {}", self.next.as_ref().unwrap()));
+        }
+
+        if self.next_else.is_some() {
+            try!(write!(f, " (else) {}", self.next_else.as_ref().unwrap()));
+        }
+
+        Ok(())
+    }
 }
 
 impl Context {
@@ -211,7 +235,6 @@ impl Parser {
     }
 
     pub fn parse(script: Vec<u8>) -> Result<Rc<ScriptElement>, String> {
-        print!("parse={:?}\n", script);
         let elements = Self::to_script_elements(script);
         let compiled = Self::compile_ifs(elements.unwrap());
         let head     = Self::build_script(compiled.unwrap(), 0);
