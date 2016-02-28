@@ -315,6 +315,8 @@ mod tests {
     use super::*;
     use std::rc::Rc;
 
+    mod official_test;
+
     fn mock_checksig(_: usize, _: &Vec<u8>, _: &Vec<u8>) -> bool { true }
 
     fn equal_checksig(_: usize, x: &Vec<u8>, y: &Vec<u8>) -> bool { x.eq(y) }
@@ -390,6 +392,16 @@ mod tests {
 
     fn test_parse_execute(script: &str, expected: bool) {
         test_with_checksig("", script, expected, mock_checksig);
+    }
+
+    #[test]
+    fn test_official_client_compat() {
+        let result = official_test::Tester::test(|sig, pub_key, _| {
+            let result = test_base(sig, pub_key, true, mock_checksig);
+            result.is_ok() && result.unwrap()
+        });
+
+        assert_eq!(result, 576);
     }
 
     #[test]
