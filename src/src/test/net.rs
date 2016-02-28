@@ -1,13 +1,15 @@
 use net::*;
 use net::messages::*;
+
 use utils::Debug;
+
 use std::io::Cursor;
 use std::fs::File;
 
 #[test]
 fn test_block() {
     let mut block_data = File::open("src/test/block.dat").unwrap();
-    let block = BlockMessage::deserialize(&mut block_data).unwrap();
+    BlockMessage::deserialize(&mut block_data).unwrap();
 }
 
 #[test]

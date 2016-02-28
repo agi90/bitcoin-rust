@@ -3,13 +3,8 @@ mod human_parser;
 
 use self::op_codes::OpCode;
 
-use utils::IntUtils;
-
-use std::rc::Rc;
-use std::fmt;
-
 pub struct Context {
-    data: Rc<ScriptElement>,
+    script: BitcoinScript,
     stack: Vec<Vec<u8>>,
     valid: bool,
     altstack: Vec<Vec<u8>>,
@@ -21,42 +16,77 @@ pub struct Context {
 }
 
 #[derive(Debug, PartialEq)]
-pub struct ScriptElement {
-    op_code: OpCode,
-    data: Vec<u8>,
-    next: Option<Rc<ScriptElement>>,
-    next_else: Option<Rc<ScriptElement>>,
-    id: usize,
+pub struct BitcoinScript {
+    script: Vec<u8>,
+    pointer: usize,
+    exception_thrown: bool,
+    eof: bool,
 }
 
-impl fmt::Display for ScriptElement {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        if self.data.len() == 0 {
-            try!(write!(f, "{}", self.op_code.to_str()));
-        } else {
-            try!(write!(f, "0x"));
-            for byte in &self.data {
-                try!(write!(f, "{:02X}", byte));
-            }
+impl BitcoinScript {
+    pub fn new(script: Vec<u8>) -> BitcoinScript {
+        BitcoinScript {
+            script: script,
+            pointer: 0,
+            exception_thrown: false,
+            eof: false,
+        }
+    }
+
+    pub fn next(&mut self) {
+        if self.valid() {
+            self.pointer += 1;
+        }
+    }
+
+    fn set_eof(&mut self) {
+        if self.pointer >= self.script.len() {
+            self.eof = true;
+        }
+    }
+
+    pub fn read(&mut self, bytes: usize) -> Vec<u8> {
+        if !self.valid() || self.pointer + bytes > self.script.len() {
+            self.exception_thrown = true;
+            return vec![];
         }
 
-        if self.next.is_some() {
-            try!(write!(f, " {}", self.next.as_ref().unwrap()));
+        let mut data = vec![];
+        data.extend(&self.script[self.pointer..self.pointer + bytes]);
+
+        if bytes > 0 {
+            self.pointer += bytes - 1;
         }
 
-        if self.next_else.is_some() {
-            try!(write!(f, " (else) {}", self.next_else.as_ref().unwrap()));
+        self.set_eof();
+
+        data
+    }
+
+    pub fn valid(&self) -> bool {
+         !self.eof && !self.exception_thrown
+    }
+
+    pub fn index(&self) -> usize { self.pointer }
+
+    pub fn eof(&self) -> bool { self.eof }
+
+    pub fn current(&mut self) -> Option<OpCode> {
+        self.set_eof();
+
+        if self.eof || self.exception_thrown {
+            return Some(OpCode::Nop);
         }
 
-        Ok(())
+        OpCode::from_byte(self.script[self.pointer])
     }
 }
 
 impl Context {
-    pub fn new(data: Rc<ScriptElement>, stack: Vec<Vec<u8>>,
+    pub fn new(script: Vec<u8>, stack: Vec<Vec<u8>>,
                checksig: fn(usize, &Vec<u8>, &Vec<u8>) -> bool) -> Context {
         Context {
-            data: data,
+            script: BitcoinScript::new(script),
             stack: stack,
             valid: true,
             altstack: vec![],
@@ -65,17 +95,9 @@ impl Context {
             conditional_executed: vec![],
         }
     }
-}
 
-impl ScriptElement {
-    pub fn new(op_code: OpCode, data: Vec<u8>, id: usize) -> ScriptElement {
-        ScriptElement {
-            op_code: op_code,
-            data: data,
-            next: None,
-            next_else: None,
-            id: id,
-        }
+    pub fn valid(&self) -> bool {
+        self.valid && self.script.valid()
     }
 }
 
@@ -86,185 +108,11 @@ impl Parser {
         human_parser::Parser::parse(script)
     }
 
-    pub fn parse_human_readable(script: &str) -> Result<Rc<ScriptElement>, String> {
-        let human_parsed = Self::preprocess_human_readable(script);
-
-        match human_parsed {
-            Err(x) => Err(x),
-            Ok(x) => Self::parse(x),
-        }
-    }
-
-    fn get_data(script: &mut Vec<u8>, bytes: i32) -> Result<Vec<u8>, String> {
-        let mut data = Vec::new();
-
-        for _ in 0..bytes {
-            let el = script.pop();
-            match el {
-                Some(x) => data.push(x),
-                None => return Err(format!("Unexpected end of data")),
-            };
-        }
-
-        Ok(data)
-    }
-
-    fn get_data_bytes(script: &mut Vec<u8>, bytes: u8) -> Result<Vec<u8>, String> {
-        assert!(bytes <= 4);
-        assert!(script.len() >= bytes as usize);
-
-        let mut vec_u8_number: Vec<u8> = vec![];
-        for _ in 0..bytes {
-            vec_u8_number.push(script.pop().unwrap());
-        }
-
-        // TODO: Reasearch this better. It's unclear to me
-        // whether PUSHDATA{1,2,4} have a u32 or a i32 as argument.
-        // It feels wrong to have a u32 given that everything else
-        // is a i32, but there are tests in the official client that
-        // use 0xFF as argument for PUSHDATA1 which clearly is not a i32.
-        let number = IntUtils::to_u32(&vec_u8_number);
-
-        Self::get_data(script, number as i32)
-    }
-
-    fn to_script_elements(script_: Vec<u8>)
-    -> Result<Vec<Box<ScriptElement>>, String> {
-        let mut script = script_;
-        let mut script_elements: Vec<Box<ScriptElement>> = vec![];
-        let len = script.len();
-
-        if script.len() == 0 {
-            // When the script is empty we just return a singleton
-            // with OP_NOP which is equivalent but makes things easier
-            // for us
-            return Ok(vec![Box::new(ScriptElement::new(OpCode::Nop, vec![], 0))]);
-        }
-
-        script.reverse();
-        while script.len() > 0 {
-            let op_code = script.pop().unwrap();
-            let op = match OpCode::from_byte(op_code) {
-                Some(x) => x,
-                None => return Err(format!("Op `0x{:2x}` not recognized.", op_code)),
-            };
-
-            let id = len - script.len() - 1;
-
-            let data = match op.to_byte() {
-                0x01 ... 0x4b => Self::get_data(&mut script, op.to_byte() as i32),
-                // PUSHDATA{1,2,4}
-                0x4c ... 0x4e => {
-                    let bytes = match op_code {
-                        0x4c => 1,
-                        0x4d => 2,
-                        0x4e => 4,
-                        _ => unreachable!(),
-                    };
-
-                    Self::get_data_bytes(&mut script, bytes)
-                },
-                _ => Ok(vec![]),
-            };
-
-            let element = ScriptElement::new(op, data.unwrap(), id);
-            script_elements.push(Box::new(element));
-        }
-
-        Ok(script_elements)
-    }
-
-    fn compile_ifs(script_: Vec<Box<ScriptElement>>)
-    -> Result<Vec<(Box<ScriptElement>, u32)>, String> {
-        let mut script = script_;
-        script.reverse();
-
-        let mut script_elements: Vec<(Box<ScriptElement>, u32)> = vec![];
-        let mut level = 0;
-
-        while script.len() > 0 {
-            let element = script.pop().unwrap();
-
-            let op_code = element.op_code;
-            match op_code {
-                OpCode::EndIf | OpCode::Else => { level -= 1 },
-                _ => {},
-            };
-
-            script_elements.push((element, level));
-
-            match op_code {
-                OpCode::If | OpCode::Else | OpCode::NotIf => { level += 1 },
-                _ => {},
-            };
-        }
-
-        if level != 0 {
-            return Err(format!("Unbalanced IF or IF_NOT. level={}", level));
-        }
-
-        Ok(script_elements)
-    }
-
-
-    fn build_script(script_elements_: Vec<(Box<ScriptElement>, u32)>,
-                        level: u32) -> Option<(Rc<ScriptElement>, u32)>
-    {
-        let mut script_elements = script_elements_;
-
-        while script_elements.len() > 1 {
-            let code = script_elements.last().unwrap().0.op_code;
-            let parent = Rc::new(*script_elements.pop().unwrap().0);
-            script_elements.last_mut().unwrap().0.next = Some(parent.clone());
-
-            if code == OpCode::EndIf || code == OpCode::Else {
-                let branch = Self::get_next_branch(&mut script_elements, level);
-                let mut branching_el = script_elements.last_mut().unwrap();
-
-                branching_el.0.next = if branch.len() > 0 {
-                    Some(Self::build_script(branch, level + 1).unwrap().0)
-                } else {
-                    Some(parent.clone())
-                };
-
-                branching_el.0.next_else = Some(parent);
-            }
-        }
-
-        script_elements.pop().map(|x| (Rc::new(*x.0), x.1))
-    }
-
-    pub fn parse(script: Vec<u8>) -> Result<Rc<ScriptElement>, String> {
-        let elements = Self::to_script_elements(script);
-        let compiled = Self::compile_ifs(elements.unwrap());
-        let head     = Self::build_script(compiled.unwrap(), 0);
-
-        match head {
-            Some(x) => {
-                Ok(x.0)
-            },
-            None => Err(format!("Empty script")),
-        }
-    }
-
-    fn get_next_branch(script_elements: &mut Vec<(Box<ScriptElement>, u32)>,
-                           level: u32) -> Vec<(Box<ScriptElement>, u32)> {
-        let mut branch = vec![];
-        while script_elements.last().unwrap().1 != level {
-            let el = script_elements.pop().unwrap();
-            branch.insert(0, el);
-        }
-        branch
-    }
-
     fn no_checksig_allowed(_: usize, _: &Vec<u8>, _: &Vec<u8>) -> bool { false }
 
-    pub fn execute(sig_script_: Vec<u8>, script_pub_key_: Vec<u8>,
+    pub fn execute(sig_script: Vec<u8>, script_pub_key: Vec<u8>,
                    checksig: fn(usize, &Vec<u8>, &Vec<u8>) -> bool)
     -> Result<bool, String> {
-        let sig_script = try!(Self::parse(sig_script_));
-        let script_pub_key = try!(Self::parse(script_pub_key_));
-
         // OP_CHECKSIG is not allowed when executing sigScript
         // TODO: ideally we should just invalidate the context
         let sig_script_context = try!(Self::execute_base(vec![],
@@ -283,26 +131,29 @@ impl Parser {
     }
 
     fn execute_base(input_stack: Vec<Vec<u8>>,
-                   parsed_script: Rc<ScriptElement>,
-                   checksig: fn(usize, &Vec<u8>, &Vec<u8>) -> bool)
+                    script: Vec<u8>,
+                    checksig: fn(usize, &Vec<u8>, &Vec<u8>) -> bool)
     -> Result<Context, String> {
-        let mut context = Context::new(parsed_script, input_stack, checksig);
-        let mut done = false;
+        let mut context = Context::new(script.clone(), input_stack, checksig);
 
-        while !done && context.valid {
-            let ref advancing = context.data.op_code.is_advancing();
-            let op_code = context.data.op_code;
+        if context.script.script.len() == 0 {
+            return Ok(context);
+        }
 
-            let mut new_context = op_code.execute(context);
-
-            if !advancing {
-                match new_context.data.next.clone() {
-                    Some(ref x) => new_context.data = x.clone(),
-                    None => done = true,
+        while context.valid() {
+            let op_code = match context.script.current() {
+                Some(op) => op,
+                None => {
+                    context.valid = false;
+                    return Ok(context);
                 }
-            }
+            };
 
-            context = new_context;
+            context = op_code.execute(context);
+
+            if !op_code.is_advancing() {
+                context.script.next();
+            }
         }
 
         Ok(context)
@@ -313,49 +164,12 @@ impl Parser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::rc::Rc;
 
     mod official_test;
 
     fn mock_checksig(_: usize, _: &Vec<u8>, _: &Vec<u8>) -> bool { true }
 
     fn equal_checksig(_: usize, x: &Vec<u8>, y: &Vec<u8>) -> bool { x.eq(y) }
-
-    fn print_script(head: Rc<ScriptElement>) {
-        print!("{:?} -(next)-> {:?} -(else)-> {:?}\n",
-            head, head.next.clone(), head.next_else.clone());
-
-        if head.next.is_some() {
-            print_script(head.next.clone().unwrap());
-        }
-    }
-
-    fn check_script(script: &str) -> Result<bool, String> {
-        let raw_script = try!(Parser::preprocess_human_readable(script));
-        let data = try!(Parser::parse(raw_script.clone()));
-
-        if raw_script.len() == 0 {
-            return Ok(true);
-        }
-
-        print_script(data.clone());
-
-        let mut el = Some(data.clone());
-        while el != None {
-            let e = el.unwrap();
-
-            // Test that the id and the actual position in the script coincide
-            // TODO: test both branches of the if.
-            if raw_script[e.id] != e.op_code.to_byte() {
-                return Err(
-                    format!("Mismatched op at {}, {} != {}\n", e.id, raw_script[e.id], e.op_code.to_byte()));
-            }
-
-            el = e.next.clone();
-        }
-
-        Ok(true)
-    }
 
     fn test_base(script_sig: &str,
                  script_pub_key: &str,
@@ -364,16 +178,11 @@ mod tests {
         print!("\n\n sig=`{}` pub_key=`{}` [expected={}]\n",
                script_sig, script_pub_key, expected);
 
-        if script_sig.len() > 0 {
-            try!(check_script(script_sig));
-        }
-
-        if script_pub_key.len() > 0 {
-            try!(check_script(script_pub_key));
-        }
-
         let raw_script_sig = Parser::preprocess_human_readable(script_sig).unwrap();
         let raw_script_pub_key = Parser::preprocess_human_readable(script_pub_key).unwrap();
+
+        print!("\n\n sig=`{:?}` pub_key=`{:?}` [expected={}]\n",
+               raw_script_sig, raw_script_pub_key, expected);
 
         let result = Parser::execute(raw_script_sig, raw_script_pub_key, checksig).unwrap();
         Ok(result == expected)

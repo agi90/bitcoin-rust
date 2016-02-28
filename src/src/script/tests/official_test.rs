@@ -33,10 +33,13 @@ impl Tester {
             print!("passed={}\n", passed);
         }
 
-        print!("failed tests:\n");
+        println!("=====================================");
+        println!("Failed tests.");
+        println!("=====================================");
         for t in failed {
-            print!("sig=`{}`, pub_key=`{}`\n", t.0, t.1);
+            println!("sig=`{}`, pub_key=`{}`\n", t.0, t.1);
         }
+        println!("=====================================");
 
         passed
     }

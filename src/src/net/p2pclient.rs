@@ -136,10 +136,6 @@ impl State {
         self.block_store.get(hash)
     }
 
-    pub fn get_block_metadata(&self, hash: &BitcoinHash) -> Option<&BlockMetadata> {
-        self.block_store.get_metadata(hash)
-    }
-
     pub fn block_height(&self, hash: &BitcoinHash) -> Option<usize> {
         self.block_store.get_height(hash)
     }

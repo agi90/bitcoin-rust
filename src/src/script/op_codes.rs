@@ -3,8 +3,13 @@ use super::Context;
 use utils::IntUtils;
 use utils::CryptoUtils;
 
+use net::messages::Deserialize;
+use super::BitcoinScript;
+
 use std::fmt;
 use std::cmp;
+
+use std::io::Cursor;
 
 fn op_dup(context: Context) -> Context {
     pick(context, 0)
@@ -21,8 +26,7 @@ fn op_ifdup(context: Context) -> Context {
 }
 
 fn stack_op<F>(context: Context, op: F) -> Context
-where F: Fn(&mut Vec<Vec<u8>>)
-{
+where F: Fn(&mut Vec<Vec<u8>>) {
     let mut new_context = context;
     op(&mut new_context.stack);
 
@@ -284,7 +288,7 @@ fn op_ripemd160(context: Context) -> Context {
 fn op_codeseparator(context: Context) -> Context {
     let mut new_context = context;
 
-    new_context.codeseparator = new_context.data.id;
+    new_context.codeseparator = new_context.script.index();
 
     new_context
 }
@@ -402,7 +406,74 @@ fn op_false(context: Context) -> Context {
 
 fn op_pushdata(context: Context) -> Context {
     let mut new_context = context;
-    new_context.stack.push(new_context.data.data.clone());
+    let byte = new_context.script.current().unwrap().to_byte();
+
+    new_context.script.next();
+    let data = new_context.script.read(byte as usize);
+    new_context.stack.push(data);
+
+    new_context
+}
+
+fn op_pushdata1(context: Context) -> Context {
+    op_pushdata_base::<u8>(context, 1)
+}
+
+fn op_pushdata2(context: Context) -> Context {
+    op_pushdata_base::<u16>(context, 2)
+}
+
+fn op_pushdata4(context: Context) -> Context {
+    op_pushdata_base::<u32>(context, 4)
+}
+
+// TODO: see if there's a better way to do this
+trait ToUsize {
+    fn to_usize(self) -> usize;
+}
+
+impl ToUsize for u8 {
+    fn to_usize(self) -> usize { self as usize }
+}
+
+impl ToUsize for u16 {
+    fn to_usize(self) -> usize { self as usize }
+}
+
+impl ToUsize for u32 {
+    fn to_usize(self) -> usize { self as usize }
+}
+
+fn op_pushdata_base<T: Deserialize + ToUsize>(context: Context, size: usize) -> Context {
+    let mut new_context = context;
+
+    new_context.script.next();
+
+    let data = new_context.script.read(size);
+
+    if data.len() < size {
+        // not enough data
+        new_context.valid = false;
+        return new_context;
+    }
+
+    let bytes = T::deserialize(&mut Cursor::new(data));
+
+    match bytes {
+        Ok(b) => {
+            let mut data = vec![];
+            let b_usize = b.to_usize();
+            if b_usize > 0 {
+                new_context.script.next();
+                data = new_context.script.read(b_usize);
+            }
+
+            new_context.stack.push(data);
+        }
+        Err(_) => {
+            new_context.valid = false;
+        }
+    }
 
     new_context
 }
@@ -439,45 +510,125 @@ fn op_if(context: Context) -> Context {
     let mut new_context = context;
     let last = new_context.stack.pop().unwrap();
 
+    new_context.script.next();
+
     if is_true(&Some(&last)) {
-        new_context.data = new_context.data.next.clone().unwrap();
         new_context.conditional_executed.push(true);
+        new_context
     } else {
-        new_context.data = new_context.data.next_else.clone().unwrap();
         new_context.conditional_executed.push(false);
+        goto_next_branch(new_context)
+    }
+}
+
+fn goto_next_branch(context: Context) -> Context {
+    let mut new_context = context;
+    let mut level = 1;
+
+    while level > 0 && new_context.script.valid() {
+        let next = get_next_op(&new_context.script);
+
+        new_context.script.pointer = next;
+
+        match new_context.script.current() {
+            Some(op) => match op {
+                OpCode::If | OpCode::NotIf => level += 1,
+                OpCode::Else => {
+                    if level == 1 {
+                        break;
+                    }
+                },
+                OpCode::EndIf => {
+                    level -= 1;
+                    if level == 0 {
+                        break;
+                    }
+                }
+                _ => {}
+            },
+            None => {
+                new_context.valid = false;
+                return new_context;
+            }
+        };
+
+        new_context.script.next();
     }
 
     new_context
 }
 
-fn op_else(context: Context) -> Context {
-    let mut new_context = context;
+// TODO: this should use more the existing logic that implements pushdata
+fn get_next_op(script: &BitcoinScript) -> usize {
+    let mut i = script.pointer;
+    let sc = &script.script;
 
-    let conditional_executed = new_context.conditional_executed.pop().unwrap();
-    if !conditional_executed {
-        new_context.data = new_context.data.next.clone().unwrap();
-    } else {
-        new_context.data = new_context.data.next_else.clone().unwrap();
+    while i < sc.len() {
+        match sc[i] {
+            0x01 ... 0x4b => {
+                i += sc[i] as usize;
+            },
+            0x4c => {
+                if sc.len() <= i + 1 {
+                    return sc.len();
+                }
+                i += sc[i + 1] as usize;
+            },
+            0x4d => {
+                if sc.len() <= i + 2 {
+                    return sc.len();
+                }
+                let bytes_array = &sc[i+1..i+3];
+                let bytes = u16::deserialize(&mut Cursor::new(bytes_array));
+                // TODO: handle errors
+                i += bytes.unwrap() as usize;
+            },
+            0x4e => {
+                if sc.len() <= i + 4 {
+                    return sc.len();
+                }
+                let bytes_array = &sc[i+1..i+5];
+                let bytes = u32::deserialize(&mut Cursor::new(bytes_array));
+                // TODO: handle errors
+                i += bytes.unwrap() as usize;
+            },
+            _ => {
+                return i;
+            },
+        }
+
+        i += 1;
     }
 
+    sc.len()
+}
+
+fn op_else(context: Context) -> Context {
+    let mut new_context = context;
+    let conditional_executed = new_context.conditional_executed.pop().unwrap();
+    new_context.script.next();
     new_context.conditional_executed.push(!conditional_executed);
 
-    new_context
+    if !conditional_executed {
+        new_context
+    } else {
+        goto_next_branch(new_context)
+    }
 }
 
 fn op_notif(context: Context) -> Context {
     let mut new_context = context;
     let last = new_context.stack.pop().unwrap();
 
-    if !is_true(&Some(&last)) {
-        new_context.data = new_context.data.next.clone().unwrap();
-        new_context.conditional_executed.push(true);
-    } else {
-        new_context.data = new_context.data.next_else.clone().unwrap();
-        new_context.conditional_executed.push(false);
-    }
+    new_context.script.next();
 
-    new_context
+    if !is_true(&Some(&last)) {
+        new_context.conditional_executed.push(true);
+        new_context
+    } else {
+        new_context.conditional_executed.push(false);
+        goto_next_branch(new_context)
+    }
 }
 
 fn op_endif(context: Context) -> Context {
@@ -538,13 +689,13 @@ fn op_size(context: Context) -> Context {
 impl fmt::Debug for Context {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "Context(data={:?}, stack={:?}, valid={:?}, branch_executed={:?})",
-               self.data, self.stack, self.valid, self.conditional_executed)
+               self.script, self.stack, self.valid, self.conditional_executed)
     }
 }
 
 impl cmp::PartialEq for Context {
     fn eq(&self, other: &Context) -> bool {
-        self.data == other.data && self.stack == other.stack &&
+        self.script == other.script && self.stack == other.stack &&
             self.valid == other.valid
     }
 }
@@ -588,12 +739,6 @@ macro_rules! op_codes {
                 match data {
                     $($tostring => Some(OpCode::$element)),*,
                     _ => None,
-                }
-            }
-
-            pub fn to_str(&self) -> &'static str {
-                match self {
-                    $(&OpCode::$element => $tostring),*
                 }
             }
         }
@@ -678,9 +823,9 @@ op_codes!(
     Push73Bytes:         ("PUSH73",             0x49, op_pushdata),
     Push74Bytes:         ("PUSH74",             0x4a, op_pushdata),
     Push75Bytes:         ("PUSH75",             0x4b, op_pushdata),
-    PushData1:           ("PUSHDATA1",          0x4c, op_pushdata),
-    PushData2:           ("PUSHDATA2",          0x4d, op_pushdata),
-    PushData4:           ("PUSHDATA4",          0x4e, op_pushdata),
+    PushData1:           ("PUSHDATA1",          0x4c, op_pushdata1),
+    PushData2:           ("PUSHDATA2",          0x4d, op_pushdata2),
+    PushData4:           ("PUSHDATA4",          0x4e, op_pushdata4),
     _1Negate:            ("1NEGATE",            0x4f, op_1negate),
     Reserved:            ("RESERVED",           0x50, op_mark_invalid),
     _1:                  ("1",                  0x51, op_1),
@@ -767,7 +912,8 @@ op_codes!(
     CheckMultiSig:       ("CHECKMULTISIG",      0xae, op_checkmultisig),
     CheckMultiSigVerify: ("CHECKMULTISIGVERIFY",0xaf, op_checkmultisigverify),
     Nop1:                ("NOP1",               0xb0, op_nop),
-    Nop2:                ("NOP2",               0xb1, op_nop),
+    // TODO: CheckLockTimeVerify
+    CheckLockTimeVerify: ("CHECKLOCKTIMEVERIFY",0xb1, op_nop),
     Nop3:                ("NOP3",               0xb2, op_nop),
     Nop4:                ("NOP4",               0xb3, op_nop),
     Nop5:                ("NOP5",               0xb4, op_nop),
@@ -775,9 +921,77 @@ op_codes!(
     Nop7:                ("NOP7",               0xb6, op_nop),
     Nop8:                ("NOP8",               0xb7, op_nop),
     Nop9:                ("NOP9",               0xb8, op_nop),
-    Nop10:               ("NOP10",              0xb9, op_nop);
-    // invalid opcodes 0xba - 0xff
-
+    Nop10:               ("NOP10",              0xb9, op_nop),
+    Invalid11:           ("INVALID11",          0xba, op_mark_invalid),
+    Invalid12:           ("INVALID12",          0xbb, op_mark_invalid),
+    Invalid13:           ("INVALID13",          0xbc, op_mark_invalid),
+    Invalid14:           ("INVALID14",          0xbd, op_mark_invalid),
+    Invalid15:           ("INVALID15",          0xbe, op_mark_invalid),
+    Invalid16:           ("INVALID16",          0xbf, op_mark_invalid),
+    Invalid17:           ("INVALID17",          0xc0, op_mark_invalid),
+    Invalid18:           ("INVALID18",          0xc1, op_mark_invalid),
+    Invalid19:           ("INVALID19",          0xc2, op_mark_invalid),
+    Invalid20:           ("INVALID20",          0xc3, op_mark_invalid),
+    Invalid21:           ("INVALID21",          0xc4, op_mark_invalid),
+    Invalid22:           ("INVALID22",          0xc5, op_mark_invalid),
+    Invalid23:           ("INVALID23",          0xc6, op_mark_invalid),
+    Invalid24:           ("INVALID24",          0xc7, op_mark_invalid),
+    Invalid25:           ("INVALID25",          0xc8, op_mark_invalid),
+    Invalid26:           ("INVALID26",          0xc9, op_mark_invalid),
+    Invalid27:           ("INVALID27",          0xca, op_mark_invalid),
+    Invalid28:           ("INVALID28",          0xcb, op_mark_invalid),
+    Invalid29:           ("INVALID29",          0xcc, op_mark_invalid),
+    Invalid30:           ("INVALID30",          0xcd, op_mark_invalid),
+    Invalid31:           ("INVALID31",          0xce, op_mark_invalid),
+    Invalid32:           ("INVALID32",          0xcf, op_mark_invalid),
+    Invalid33:           ("INVALID33",          0xd0, op_mark_invalid),
+    Invalid34:           ("INVALID34",          0xd1, op_mark_invalid),
+    Invalid35:           ("INVALID35",          0xd2, op_mark_invalid),
+    Invalid36:           ("INVALID36",          0xd3, op_mark_invalid),
+    Invalid37:           ("INVALID37",          0xd4, op_mark_invalid),
+    Invalid38:           ("INVALID38",          0xd5, op_mark_invalid),
+    Invalid39:           ("INVALID39",          0xd6, op_mark_invalid),
+    Invalid40:           ("INVALID40",          0xd7, op_mark_invalid),
+    Invalid41:           ("INVALID41",          0xd8, op_mark_invalid),
+    Invalid42:           ("INVALID42",          0xd9, op_mark_invalid),
+    Invalid43:           ("INVALID43",          0xda, op_mark_invalid),
+    Invalid44:           ("INVALID44",          0xdb, op_mark_invalid),
+    Invalid45:           ("INVALID45",          0xdc, op_mark_invalid),
+    Invalid46:           ("INVALID46",          0xdd, op_mark_invalid),
+    Invalid47:           ("INVALID47",          0xde, op_mark_invalid),
+    Invalid48:           ("INVALID48",          0xdf, op_mark_invalid),
+    Invalid49:           ("INVALID49",          0xe0, op_mark_invalid),
+    Invalid50:           ("INVALID50",          0xe1, op_mark_invalid),
+    Invalid51:           ("INVALID51",          0xe2, op_mark_invalid),
+    Invalid52:           ("INVALID52",          0xe3, op_mark_invalid),
+    Invalid53:           ("INVALID53",          0xe4, op_mark_invalid),
+    Invalid54:           ("INVALID54",          0xe5, op_mark_invalid),
+    Invalid55:           ("INVALID55",          0xe6, op_mark_invalid),
+    Invalid56:           ("INVALID56",          0xe7, op_mark_invalid),
+    Invalid57:           ("INVALID57",          0xe8, op_mark_invalid),
+    Invalid58:           ("INVALID58",          0xe9, op_mark_invalid),
+    Invalid59:           ("INVALID59",          0xea, op_mark_invalid),
+    Invalid60:           ("INVALID60",          0xeb, op_mark_invalid),
+    Invalid61:           ("INVALID61",          0xec, op_mark_invalid),
+    Invalid62:           ("INVALID62",          0xed, op_mark_invalid),
+    Invalid63:           ("INVALID63",          0xee, op_mark_invalid),
+    Invalid64:           ("INVALID64",          0xef, op_mark_invalid),
+    Invalid65:           ("INVALID65",          0xf0, op_mark_invalid),
+    Invalid66:           ("INVALID66",          0xf1, op_mark_invalid),
+    Invalid67:           ("INVALID67",          0xf2, op_mark_invalid),
+    Invalid68:           ("INVALID68",          0xf3, op_mark_invalid),
+    Invalid69:           ("INVALID69",          0xf4, op_mark_invalid),
+    Invalid70:           ("INVALID70",          0xf5, op_mark_invalid),
+    Invalid71:           ("INVALID71",          0xf6, op_mark_invalid),
+    Invalid72:           ("INVALID72",          0xf7, op_mark_invalid),
+    Invalid73:           ("INVALID73",          0xf8, op_mark_invalid),
+    Invalid74:           ("INVALID74",          0xf9, op_mark_invalid),
+    Invalid75:           ("INVALID75",          0xfa, op_mark_invalid),
+    Invalid76:           ("INVALID76",          0xfb, op_mark_invalid),
+    Invalid77:           ("INVALID77",          0xfc, op_mark_invalid),
+    Invalid78:           ("INVALID78",          0xfd, op_mark_invalid),
+    Invalid79:           ("INVALID79",          0xfe, op_mark_invalid),
+    Invalid80:           ("INVALID80",          0xff, op_mark_invalid);
     // Advancing op codes
     If, NotIf, Else
 );
@@ -785,11 +999,7 @@ op_codes!(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use super::super::Context;
-    use super::super::ScriptElement;
-
-    use std::rc::Rc;
+    use super::super::*;
 
     use rustc_serialize::base64::FromBase64;
     const ZERO : u8 = 0x80;
@@ -797,9 +1007,7 @@ mod tests {
     fn mock_checksig(_: usize, _: &Vec<u8>, _: &Vec<u8>) -> bool { true }
 
     fn get_context(stack: Vec<Vec<u8>>) -> Context {
-        let script_element = ScriptElement::new(OpCode::Nop, vec![], 0);
-
-        Context::new(Rc::new(script_element), stack, mock_checksig)
+        Context::new(vec![], stack, mock_checksig)
     }
 
     #[test]
@@ -911,12 +1119,49 @@ mod tests {
     }
 
     #[test]
-    fn test_op_pushdata_generic() {
-        let data = vec![0x01, 0x02, 0x03, 0x04, 0x05];
+    fn test_op_pushdata4() {
+        let script = vec![0x4e, 0x02, 0x00, 0x00, 0x00, 0x03, 0x04];
+        let context = Context::new(script.clone(), vec![], mock_checksig);
+        let mut expected = Context::new(script, vec![vec![0x03, 0x04]], mock_checksig);
+        advance(&mut expected, 6);
 
-        let script_element = Rc::new(ScriptElement::new(OpCode::Nop, data.clone(), 0));
-        let context = Context::new(script_element.clone(), vec![], mock_checksig);
-        let expected = Context::new(script_element.clone(), vec![data], mock_checksig);
+        let output = OpCode::PushData4.execute(context);
+        assert_eq!(output, expected);
+    }
+
+    #[test]
+    fn test_op_pushdata2() {
+        let script = vec![0x4d, 0x02, 0x00, 0x03, 0x04];
+        let context = Context::new(script.clone(), vec![], mock_checksig);
+        let mut expected = Context::new(script, vec![vec![0x03, 0x04]], mock_checksig);
+        advance(&mut expected, 4);
+
+        let output = OpCode::PushData2.execute(context);
+        assert_eq!(output, expected);
+    }
+
+    fn advance(context: &mut Context, bytes: usize) {
+        for _ in 0..bytes {
+            context.script.next();
+        }
+    }
+
+    #[test]
+    fn test_op_pushdata1() {
+        let script = vec![0x4c, 0x02, 0x03, 0x04];
+        let context = Context::new(script.clone(), vec![], mock_checksig);
+        let mut expected = Context::new(script, vec![vec![0x03, 0x04]], mock_checksig);
+        advance(&mut expected, 3);
+
+        let output = OpCode::PushData1.execute(context);
+        assert_eq!(output, expected);
+    }
+
+    #[test]
+    fn test_op_pushdata_generic() {
+        let context = Context::new(vec![0x01, 0x03], vec![], mock_checksig);
+        let mut expected = Context::new(vec![0x01, 0x03], vec![vec![0x03]], mock_checksig);
+        advance(&mut expected, 1);
 
         let output = OpCode::Push1Byte.execute(context);
         assert_eq!(output, expected);
@@ -1133,10 +1378,14 @@ mod tests {
 
     #[test]
     fn test_op_codeseparator() {
-        let script_element = Rc::new(ScriptElement::new(OpCode::Nop, vec![], 4));
+        let script = vec![0x00, 0x01, 0x02, 0x03, 0x04];
+        let mut context = Context::new(script.clone(), vec![], mock_checksig);
+        let mut expected = Context::new(script.clone(), vec![], mock_checksig);
+        for _ in 0..3 {
+            context.script.next();
+            expected.script.next();
+        }
 
-        let context = Context::new(script_element.clone(), vec![], mock_checksig);
-        let mut expected = Context::new(script_element, vec![], mock_checksig);
         expected.codeseparator = 4;
 
         assert_eq!(expected, OpCode::CodeSeparator.execute(context));
