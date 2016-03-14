@@ -1,6 +1,9 @@
 mod utils;
+mod serialize;
+
 pub mod script;
 pub mod net;
+
 #[cfg(test)]
 mod test;
 

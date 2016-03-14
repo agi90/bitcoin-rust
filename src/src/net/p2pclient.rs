@@ -1,19 +1,6 @@
 extern crate mio;
 extern crate rand;
 
-use std::net::SocketAddr;
-use mio::tcp;
-
-use super::rpcengine::RPCEngine;
-use super::rpcengine::Message;
-use super::rpcengine;
-use super::messages::*;
-use super::expiring_cache::ExpiringCache;
-use super::expiring_cache::Timeout;
-
-use super::Services;
-use super::IPAddress;
-
 use time;
 use time::Duration;
 
@@ -23,12 +10,23 @@ use std::net::ToSocketAddrs;
 use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard, Arc};
 use std::thread;
+use std::net::SocketAddr;
 
 use mio::Sender;
-
-use super::store::BlockStore;
+use mio::tcp;
 
 use utils::Debug;
+use serialize::{Serialize, Deserialize};
+
+use super::IPAddress;
+use super::Services;
+use super::expiring_cache::ExpiringCache;
+use super::expiring_cache::Timeout;
+use super::messages::*;
+use super::rpcengine::Message;
+use super::rpcengine::RPCEngine;
+use super::rpcengine;
+use super::store::BlockStore;
 
 struct BitcoinClient {
     version: i32,

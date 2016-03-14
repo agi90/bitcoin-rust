@@ -6,6 +6,8 @@ use utils::Debug;
 use std::io::Cursor;
 use std::fs::File;
 
+use serialize::{Serialize, Deserialize};
+
 #[test]
 fn test_block() {
     let mut block_data = File::open("src/test/block.dat").unwrap();

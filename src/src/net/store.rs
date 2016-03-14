@@ -2,9 +2,10 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::Write;
 
-use super::messages::{BlockMetadata, NetworkType, BlockMessage, Serialize,
-                      Deserialize, BitcoinHash, TxIn, TxOut, OutPoint,
-                      TxMessage, ShortFormatTm};
+use serialize::{Serialize, Deserialize};
+use super::messages::{BlockMetadata, NetworkType, BlockMessage, BitcoinHash,
+                      TxIn, TxOut, OutPoint, TxMessage, ShortFormatTm,
+                      SerializeHash};
 
 use std::io::{Seek, SeekFrom};
 

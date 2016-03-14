@@ -2,11 +2,13 @@ extern crate rand;
 
 use super::IPAddress;
 use super::Services;
+
 use utils::CryptoUtils;
+use serialize::{Serialize, Serializer, Deserialize, Deserializer};
 
 use std::ops::Deref;
 
-use std::io::{Cursor, SeekFrom, Seek, Read, Write};
+use std::io::{Cursor, SeekFrom, Seek, Write};
 use std::net::Ipv6Addr;
 
 use std::hash::{Hash, Hasher};
@@ -49,121 +51,6 @@ pub enum Command {
 type Bytes = Vec<u8>;
 type BlockLocators = Vec<Bytes>;
 
-pub trait Serialize {
-    fn serialize(&self, serializer: &mut Serializer);
-
-    fn serialize_hash(&self) -> (Vec<u8>, BitcoinHash) {
-        let mut buffer = Cursor::new(vec![]);
-        self.serialize(&mut buffer);
-
-        let hash = CryptoUtils::sha256(&CryptoUtils::sha256(buffer.get_ref()));
-        (buffer.into_inner(), BitcoinHash::new(hash))
-    }
-
-    fn hash(&self) -> BitcoinHash {
-        self.serialize_hash().1
-    }
-}
-
-pub trait Serializer {
-    fn push(&mut self, byte: u8);
-    fn push_bytes(&mut self, data: &[u8]);
-    fn u_to_fixed(&mut self, x: u64, bytes: usize);
-    fn serialize_u(&mut self, x: u64, bytes: usize);
-    fn to_bytes(&self, u: u64) -> [u8; 8];
-    fn i_to_fixed(&mut self, x: i64, bytes: usize);
-}
-
-impl<T: Write> Serializer for T {
-    fn push(&mut self, byte: u8) {
-        self.write_all(&[byte]).unwrap();
-    }
-
-    fn push_bytes(&mut self, data: &[u8]) {
-        self.write_all(&data).unwrap();
-    }
-
-    fn u_to_fixed(&mut self, x: u64, bytes: usize) {
-        let data = self.to_bytes(x);
-        self.push_bytes(&data[0..bytes]);
-    }
-
-    fn serialize_u(&mut self, x: u64, bytes: usize) {
-        self.u_to_fixed(x, bytes);
-    }
-
-    fn to_bytes(&self, u: u64) -> [u8; 8] {
-        [((u & 0x00000000000000ff) / 0x1)               as u8,
-         ((u & 0x000000000000ff00) / 0x100)             as u8,
-         ((u & 0x0000000000ff0000) / 0x10000)           as u8,
-         ((u & 0x00000000ff000000) / 0x1000000)         as u8,
-         ((u & 0x000000ff00000000) / 0x100000000)       as u8,
-         ((u & 0x0000ff0000000000) / 0x10000000000)     as u8,
-         ((u & 0x00ff000000000000) / 0x1000000000000)   as u8,
-         ((u & 0xff00000000000000) / 0x100000000000000) as u8]
-    }
-
-    fn i_to_fixed(&mut self, x: i64, bytes: usize) {
-        let u: u64 = x.abs() as u64;
-        let mut data: [u8; 8] = self.to_bytes(u);
-        let sign = if u == x as u64 { 0x00 } else { 0x80 };
-
-        data[bytes-1] = data[bytes-1] | sign;
-
-        for i in 0..bytes {
-            self.push(data[i]);
-        }
-    }
-}
-
-impl Serialize for bool {
-    fn serialize(&self, serializer: &mut Serializer) {
-        serializer.push(if *self { 1 } else { 0 });
-    }
-}
-
-impl Serialize for i16 {
-    fn serialize(&self, serializer: &mut Serializer) {
-        serializer.i_to_fixed(*self as i64, 2);
-    }
-}
-
-impl Serialize for i32 {
-    fn serialize(&self, serializer: &mut Serializer) {
-        serializer.i_to_fixed(*self as i64, 4);
-    }
-}
-
-impl Serialize for i64 {
-    fn serialize(&self, serializer: &mut Serializer) {
-        serializer.i_to_fixed(*self, 8);
-    }
-}
-
-impl Serialize for u8 {
-    fn serialize(&self, serializer: &mut Serializer) {
-        serializer.push(*self);
-    }
-}
-
-impl Serialize for u16 {
-    fn serialize(&self, serializer: &mut Serializer) {
-        serializer.u_to_fixed(*self as u64, 2);
-    }
-}
-
-impl Serialize for u32 {
-    fn serialize(&self, serializer: &mut Serializer) {
-        serializer.serialize_u(*self as u64, 4);
-    }
-}
-
-impl Serialize for u64 {
-    fn serialize(&self, serializer: &mut Serializer) {
-        serializer.serialize_u(*self, 8);
-    }
-}
-
 impl Serialize for Ipv6Addr {
     fn serialize(&self, serializer: &mut Serializer) {
         for x in self.segments().iter() {
@@ -171,31 +58,6 @@ impl Serialize for Ipv6Addr {
             // Ip are encoded with big-endian integers
             serializer.push(bytes[1]);
             serializer.push(bytes[0]);
-        }
-    }
-}
-
-impl Serialize for time::Tm {
-    fn serialize(&self, serializer: &mut Serializer) {
-        serializer.i_to_fixed(self.to_timespec().sec, 8);
-    }
-}
-
-impl Serialize for String {
-    fn serialize(&self, serializer: &mut Serializer) {
-        let length = VarInt::new(self.as_bytes().len() as u64);
-        length.serialize(serializer);
-        serializer.push_bytes(&self.as_bytes());
-    }
-}
-
-impl<U: Serialize> Serialize for Vec<U> {
-    fn serialize(&self, serializer: &mut Serializer) {
-        let length = VarInt::new(self.len() as u64);
-        length.serialize(serializer);
-
-        for x in self {
-            x.serialize(serializer);
         }
     }
 }
@@ -234,77 +96,6 @@ impl Serialize for IPAddress {
     }
 }
 
-impl <U: Serialize, V: Serialize> Serialize for (U,V) {
-    fn serialize(&self, serializer: &mut Serializer) {
-        self.0.serialize(serializer);
-        self.1.serialize(serializer);
-    }
-}
-
-impl <U: Serialize> Serialize for [U] {
-    fn serialize(&self, serializer: &mut Serializer) {
-        for x in self {
-            x.serialize(serializer);
-        }
-    }
-}
-
-impl <U: Serialize> Serialize for [U; 4] {
-    fn serialize(&self, serializer: &mut Serializer) {
-        for x in self {
-            x.serialize(serializer);
-        }
-    }
-}
-
-impl <U: Serialize> Serialize for [U; 32] {
-    fn serialize(&self, serializer: &mut Serializer) {
-        for x in self {
-            x.serialize(serializer);
-        }
-    }
-}
-
-pub trait Deserialize: Sized {
-    fn deserialize(deserializer: &mut Deserializer) -> Result<Self, String>;
-}
-
-impl Deserialize for i32 {
-    fn deserialize(deserializer: &mut Deserializer) -> Result<Self, String> {
-        deserializer.to_i(4).map(|r| r as i32)
-    }
-}
-
-impl Deserialize for i64 {
-    fn deserialize(deserializer: &mut Deserializer) -> Result<Self, String> {
-        deserializer.to_i(8)
-    }
-}
-
-impl Deserialize for u8 {
-    fn deserialize(deserializer: &mut Deserializer) -> Result<Self, String> {
-        deserializer.to_u(1).map(|r| r as u8)
-    }
-}
-
-impl Deserialize for u16 {
-    fn deserialize(deserializer: &mut Deserializer) -> Result<Self, String> {
-        deserializer.to_u(2).map(|r| r as u16)
-    }
-}
-
-impl Deserialize for u32 {
-    fn deserialize(deserializer: &mut Deserializer) -> Result<Self, String> {
-        deserializer.to_u(4).map(|r| r as u32)
-    }
-}
-
-impl Deserialize for u64 {
-    fn deserialize(deserializer: &mut Deserializer) -> Result<Self, String> {
-        deserializer.to_u(8).map(|r| r as u64)
-    }
-}
-
 impl Deserialize for Ipv6Addr {
     fn deserialize(deserializer: &mut Deserializer) -> Result<Self, String> {
         let mut data = [0; 16];
@@ -320,154 +111,10 @@ impl Deserialize for Ipv6Addr {
     }
 }
 
-impl Deserialize for time::Tm {
-    fn deserialize(deserializer: &mut Deserializer) -> Result<Self, String> {
-        let sec = try!(deserializer.to_i(8));
-        // Somewhere around 2033 this will break
-        // unfortunately time::Tm crashes with an invalid time :-(
-        // so we need to do some validation.
-        // TODO: switch to a better library
-        if sec < 0 || sec > 2000000000 {
-            panic!();
-            // Err(format!("Invalid time sec={}", sec))
-        } else {
-            Ok(time::at_utc(time::Timespec::new(sec, 0)))
-        }
-    }
-}
-
-impl Deserialize for bool {
-    fn deserialize(deserializer: &mut Deserializer) -> Result<Self, String> {
-        let data = try!(deserializer.to_u_fixed(1));
-        Ok(data != 0)
-    }
-}
-
-impl Deserialize for String {
-    fn deserialize(deserializer: &mut Deserializer) -> Result<Self, String> {
-        let length = try!(VarInt::deserialize(deserializer)).as_u64() as usize;
-
-        if length > 1024 {
-            return Err(format!("String is too long, length={}", length));
-        }
-
-        let mut bytes = [0; 1024];
-        try!(deserializer.read_ex(&mut bytes[0..length]));
-
-        let mut bytes_vector = vec![];
-        bytes_vector.extend(bytes[0..length].into_iter());
-
-        String::from_utf8(bytes_vector).map_err(|e| format!("Error: {:?}", e))
-    }
-}
-
-impl<U: Deserialize> Deserialize for Vec<U> {
-    fn deserialize(deserializer: &mut Deserializer) -> Result<Self, String> {
-        let length = try!(VarInt::deserialize(deserializer)).as_u64() as usize;
-
-        let mut result = vec![];
-        for _ in 0..length {
-            result.push(try!(U::deserialize(deserializer)));
-        }
-
-        Ok(result)
-    }
-}
-
-impl<U:Deserialize, K: Deserialize> Deserialize for (U, K) {
-    fn deserialize(deserializer: &mut Deserializer) -> Result<Self, String> {
-        let first  = try!(U::deserialize(deserializer));
-        let second = try!(K::deserialize(deserializer));
-
-        Ok((first, second))
-    }
-}
-
-// TODO: figure out a way to generalize this
-// probably related to https://github.com/rust-lang/rfcs/issues/1038
-impl<U: Deserialize + Default + Copy> Deserialize for [U; 4] {
-    fn deserialize(deserializer: &mut Deserializer) -> Result<Self, String> {
-        let mut result = [U::default(); 4];
-        for i in 0..4 {
-            result[i] = try!(U::deserialize(deserializer));
-        }
-
-        Ok(result)
-    }
-}
-
-impl<U: Deserialize + Default + Copy> Deserialize for [U; 32] {
-    fn deserialize(deserializer: &mut Deserializer) -> Result<Self, String> {
-        let mut result = [U::default(); 32];
-        for i in 0..32 {
-            result[i] = try!(U::deserialize(deserializer));
-        }
-
-        Ok(result)
-    }
-}
-
 impl Deserialize for Services {
     fn deserialize(deserializer: &mut Deserializer) -> Result<Self, String> {
         let data = try!(u64::deserialize(deserializer));
         Ok(Services::new(data == 1))
-    }
-}
-
-pub trait Deserializer {
-    fn read_ex(&mut self, out: &mut [u8]) -> Result<(), String>;
-    fn to_i(&mut self, size: usize) -> Result<i64, String>;
-    fn to_u_fixed(&mut self, size: usize) -> Result<u64, String>;
-    fn to_u(&mut self, size: usize) -> Result<u64, String>;
-    fn to_u_slice(&self, data: &[u8]) -> u64;
-}
-
-impl<T: Read> Deserializer for T {
-    fn to_u_slice(&self, data: &[u8]) -> u64 {
-        let mut result = 0;
-        let mut multiplier: u64 = 1;
-
-        for i in 0..data.len() {
-            if i != 0 { multiplier *= 0x100 };
-            result += data[i] as u64 * multiplier;
-        }
-
-        result
-    }
-
-    fn read_ex(&mut self, out: &mut [u8]) -> Result<(), String> {
-        self.read_exact(out).map_err(|e| format!("Error: {:?}", e))
-    }
-
-    fn to_i(&mut self, size: usize) -> Result<i64, String> {
-        assert!(size == 1 || size == 2 || size == 4 || size == 8);
-
-        let mut data = [0; 8];
-        try!(self.read_ex(&mut data[0..size]));
-
-        let sign     = data[size-1] & 0x80;
-        data[size-1] = data[size-1] & 0x7F;
-
-        let unsigned = self.to_u_slice(&data[0..size]) as i64;
-
-        if sign > 0 {
-            Ok(unsigned * -1)
-        } else {
-            Ok(unsigned)
-        }
-    }
-
-    fn to_u_fixed(&mut self, size: usize) -> Result<u64, String> {
-        assert!(size == 1 || size == 2 || size == 4 || size == 8);
-
-        let mut data = [0; 8];
-        try!(self.read_ex(&mut data[0..size]));
-
-        Ok(self.to_u_slice(&data[0..size]))
-    }
-
-    fn to_u(&mut self, size: usize) -> Result<u64, String> {
-        self.to_u_fixed(size)
     }
 }
 
@@ -506,75 +153,6 @@ impl Deserialize for ShortFormatTm {
     fn deserialize(deserializer: &mut Deserializer) -> Result<Self, String> {
         let sec = try!(deserializer.to_u_fixed(4));
         Ok(ShortFormatTm::new(time::at_utc(time::Timespec::new(sec as i64, 0))))
-    }
-}
-
-#[derive(PartialEq, Debug, Clone, Copy)]
-pub struct VarInt {
-    data: u64,
-}
-
-impl VarInt {
-    pub fn new(data: u64) -> VarInt {
-        VarInt {
-            data: data,
-        }
-    }
-
-    pub fn as_u64(&self) -> u64 {
-        self.data
-    }
-}
-
-impl Deref for VarInt {
-    type Target = u64;
-
-    fn deref(&self) -> &u64 {
-        &self.data
-    }
-}
-
-impl Serialize for VarInt {
-    fn serialize(&self, serializer: &mut Serializer) {
-        let data = serializer.to_bytes(self.data);
-
-        match self.data {
-            0x00000...0x0000000fc => {
-                serializer.push(data[0])
-            },
-            0x000fd...0x00000ffff => {
-                serializer.push(0xfd);
-                serializer.push_bytes(&data[0..2]);
-            },
-            0x10000...0x0ffffffff => {
-                serializer.push(0xfe);
-                serializer.push_bytes(&data[0..4]);
-            },
-            _ => {
-                serializer.push(0xff);
-                serializer.push_bytes(&data[0..8]);
-            },
-        };
-    }
-}
-
-impl Deserialize for VarInt {
-    fn deserialize(deserializer: &mut Deserializer) -> Result<Self, String> {
-        let mut data = [0; 1];
-        try!(deserializer.read_ex(&mut data));
-
-        if data[0] < 0xfd {
-            return Ok(VarInt::new(data[0] as u64));
-        }
-
-        let bytes = match data[0] {
-            0xfd => 2,
-            0xfe => 4,
-            0xff => 8,
-            _    => 0,
-        };
-
-        Ok(VarInt::new(try!(deserializer.to_u_fixed(bytes))))
     }
 }
 
@@ -756,6 +334,20 @@ impl Deserialize for InventoryVectorType {
     }
 }
 
+pub trait SerializeHash: Serialize {
+    fn serialize_hash(&self) -> (Vec<u8>, BitcoinHash) {
+        let mut buffer = Cursor::new(vec![]);
+        self.serialize(&mut buffer);
+
+        let hash = CryptoUtils::sha256(&CryptoUtils::sha256(buffer.get_ref()));
+        (buffer.into_inner(), BitcoinHash::new(hash))
+    }
+
+    fn hash(&self) -> BitcoinHash {
+        self.serialize_hash().1
+    }
+}
+
 macro_rules! message {
     ($name:ident ; $($element: ident: $ty: ty),*) => {
         #[derive(Debug, Clone, PartialEq)]
@@ -768,6 +360,8 @@ macro_rules! message {
                 }
             }
         }
+
+        impl SerializeHash for $name {}
 
         impl Serialize for $name {
             fn serialize(&self, serializer: &mut Serializer) {
@@ -887,12 +481,7 @@ impl BlockMessage {
     pub fn into_metadata(self) -> BlockMetadata { self.metadata }
 }
 
-impl Serialize for BlockMessage {
-    fn serialize(&self, serializer: &mut Serializer) {
-        self.metadata.serialize(serializer);
-        self.txns    .serialize(serializer);
-    }
-
+impl SerializeHash for BlockMessage {
     fn serialize_hash(&self) -> (Vec<u8>, BitcoinHash) {
         let (serialized, hash) = self.metadata.serialize_hash();
         let mut buffer = Cursor::new(serialized);
@@ -900,6 +489,13 @@ impl Serialize for BlockMessage {
         self.txns.serialize(&mut buffer);
 
         (buffer.into_inner(), hash)
+    }
+}
+
+impl Serialize for BlockMessage {
+    fn serialize(&self, serializer: &mut Serializer) {
+        self.metadata.serialize(serializer);
+        self.txns    .serialize(serializer);
     }
 }
 
@@ -942,6 +538,7 @@ mod tests {
     use std::io::Cursor;
     use super::*;
     use utils::Debug;
+    use serialize::{Deserialize, Serialize};
 
     #[test]
     fn test_real_tx_fd_length_script() {

@@ -11,7 +11,9 @@ use std::io::Cursor;
 use std::sync::{Arc, Mutex};
 
 use std::net::SocketAddr;
-use super::messages::{MessageHeader, Deserialize};
+
+use serialize::Deserialize;
+use super::messages::MessageHeader;
 
 use std::collections::VecDeque;
 

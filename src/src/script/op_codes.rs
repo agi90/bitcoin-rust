@@ -3,7 +3,7 @@ use super::Context;
 use utils::IntUtils;
 use utils::CryptoUtils;
 
-use net::messages::Deserialize;
+use serialize::Deserialize;
 use super::BitcoinScript;
 
 use std::fmt;
