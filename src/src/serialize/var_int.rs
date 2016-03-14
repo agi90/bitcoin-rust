@@ -34,6 +34,8 @@ impl Serialize for VarInt {
             },
         };
     }
+
+    fn size() -> usize { 8 }
 }
 
 impl Deserialize for VarInt {

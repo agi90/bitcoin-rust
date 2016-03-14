@@ -1,5 +1,6 @@
 use time;
 use std::io::Write;
+use std::usize;
 
 use super::{Serialize, Serializer, VarInt};
 
@@ -49,54 +50,72 @@ impl Serialize for bool {
     fn serialize(&self, serializer: &mut Serializer) {
         serializer.push(if *self { 1 } else { 0 });
     }
+
+    fn size() -> usize { 1 }
 }
 
 impl Serialize for i16 {
     fn serialize(&self, serializer: &mut Serializer) {
         serializer.i_to_fixed(*self as i64, 2);
     }
+
+    fn size() -> usize { 2 }
 }
 
 impl Serialize for i32 {
     fn serialize(&self, serializer: &mut Serializer) {
         serializer.i_to_fixed(*self as i64, 4);
     }
+
+    fn size() -> usize { 4 }
 }
 
 impl Serialize for i64 {
     fn serialize(&self, serializer: &mut Serializer) {
         serializer.i_to_fixed(*self, 8);
     }
+
+    fn size() -> usize { 8 }
 }
 
 impl Serialize for u8 {
     fn serialize(&self, serializer: &mut Serializer) {
         serializer.push(*self);
     }
+
+    fn size() -> usize { 1 }
 }
 
 impl Serialize for u16 {
     fn serialize(&self, serializer: &mut Serializer) {
         serializer.u_to_fixed(*self as u64, 2);
     }
+
+    fn size() -> usize { 2 }
 }
 
 impl Serialize for u32 {
     fn serialize(&self, serializer: &mut Serializer) {
         serializer.serialize_u(*self as u64, 4);
     }
+
+    fn size() -> usize { 4 }
 }
 
 impl Serialize for u64 {
     fn serialize(&self, serializer: &mut Serializer) {
         serializer.serialize_u(*self, 8);
     }
+
+    fn size() -> usize { 8 }
 }
 
 impl Serialize for time::Tm {
     fn serialize(&self, serializer: &mut Serializer) {
         serializer.i_to_fixed(self.to_timespec().sec, 8);
     }
+
+    fn size() -> usize { 8 }
 }
 
 impl Serialize for String {
@@ -105,6 +124,8 @@ impl Serialize for String {
         length.serialize(serializer);
         serializer.push_bytes(&self.as_bytes());
     }
+
+    fn size() -> usize { usize::MAX }
 }
 
 impl<U: Serialize> Serialize for Vec<U> {
@@ -116,6 +137,8 @@ impl<U: Serialize> Serialize for Vec<U> {
             x.serialize(serializer);
         }
     }
+
+    fn size() -> usize { usize::MAX }
 }
 
 impl <U: Serialize, V: Serialize> Serialize for (U,V) {
@@ -123,6 +146,8 @@ impl <U: Serialize, V: Serialize> Serialize for (U,V) {
         self.0.serialize(serializer);
         self.1.serialize(serializer);
     }
+
+    fn size() -> usize { U::size() + V::size() }
 }
 
 impl <U: Serialize> Serialize for [U] {
@@ -131,6 +156,8 @@ impl <U: Serialize> Serialize for [U] {
             x.serialize(serializer);
         }
     }
+
+    fn size() -> usize { usize::MAX }
 }
 
 impl <U: Serialize> Serialize for [U; 4] {
@@ -139,6 +166,8 @@ impl <U: Serialize> Serialize for [U; 4] {
             x.serialize(serializer);
         }
     }
+
+    fn size() -> usize { U::size() * 4 }
 }
 
 impl <U: Serialize> Serialize for [U; 32] {
@@ -147,5 +176,14 @@ impl <U: Serialize> Serialize for [U; 32] {
             x.serialize(serializer);
         }
     }
+
+    fn size() -> usize { U::size() * 32 }
 }
 
+impl <'a, U: Serialize> Serialize for &'a U {
+    fn serialize(&self, serializer: &mut Serializer) {
+        (*self).serialize(serializer);
+    }
+
+    fn size() -> usize { U::size() }
+}

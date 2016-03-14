@@ -4,6 +4,7 @@ mod var_int;
 
 pub trait Serialize {
     fn serialize(&self, serializer: &mut Serializer);
+    fn size() -> usize where Self: Sized;
 }
 
 pub trait Deserialize: Sized {

@@ -15,6 +15,7 @@ use std::hash::{Hash, Hasher};
 
 use std::fmt;
 use std::str;
+use std::usize;
 
 use time;
 
@@ -60,6 +61,8 @@ impl Serialize for Ipv6Addr {
             serializer.push(bytes[0]);
         }
     }
+
+    fn size() -> usize { 16 }
 }
 
 impl Serialize for Services {
@@ -67,6 +70,8 @@ impl Serialize for Services {
         let data = if self.node_network { 1 } else { 0 };
         serializer.serialize_u(data, 8);
     }
+
+    fn size() -> usize { 8 }
 }
 
 impl Deserialize for IPAddress {
@@ -94,6 +99,8 @@ impl Serialize for IPAddress {
         serializer.push(data[1]);
         serializer.push(data[0]);
     }
+
+    fn size() -> usize { Services::size() + Ipv6Addr::size() + u16::size() }
 }
 
 impl Deserialize for Ipv6Addr {
@@ -147,6 +154,8 @@ impl Serialize for ShortFormatTm {
     fn serialize(&self, serializer: &mut Serializer) {
         serializer.serialize_u(self.data.to_timespec().sec as u64, 4);
     }
+
+    fn size() -> usize { 4 }
 }
 
 impl Deserialize for ShortFormatTm {
@@ -202,6 +211,8 @@ impl Serialize for BitcoinHash {
     fn serialize(&self, serializer: &mut Serializer) {
         self.data.serialize(serializer);
     }
+
+    fn size() -> usize { <[u8; 32]>::size() }
 }
 
 impl Deserialize for BitcoinHash {
@@ -267,6 +278,8 @@ impl Serialize for Command {
         assert_eq!(bytes.len(), 12);
         serializer.push_bytes(bytes);
     }
+
+    fn size() -> usize { 12 }
 }
 
 impl Deserialize for NetworkType {
@@ -296,6 +309,8 @@ impl Serialize for NetworkType {
 
         serializer.serialize_u(magic, 4);
     }
+
+    fn size() -> usize { 4 }
 }
 
 #[allow(non_camel_case_types)]
@@ -318,6 +333,8 @@ impl Serialize for InventoryVectorType {
 
         index.serialize(serializer);
     }
+
+    fn size() -> usize { u32::size() }
 }
 
 impl Deserialize for InventoryVectorType {
@@ -366,6 +383,10 @@ macro_rules! message {
         impl Serialize for $name {
             fn serialize(&self, serializer: &mut Serializer) {
                 $(self.$element.serialize(serializer));*
+            }
+
+            fn size() -> usize {
+                $(<$ty as Serialize>::size() +)* 0
             }
         }
 
@@ -497,6 +518,8 @@ impl Serialize for BlockMessage {
         self.metadata.serialize(serializer);
         self.txns    .serialize(serializer);
     }
+
+    fn size() -> usize { usize::MAX }
 }
 
 impl Deserialize for BlockMessage {
